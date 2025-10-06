@@ -1,1 +1,10 @@
 .env
+.frontend/package-lock.json
+.frontend/package.json
+.frontend/node_modules
+.frontend/dist
+__pycache__
+*.pyc
+instance
+node_modules
+__pycache__/database.cpython-312.pyc

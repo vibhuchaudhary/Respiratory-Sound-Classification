@@ -12,15 +12,19 @@
 
 .profile-section {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 15px;
-    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #2f3031;
+    margin-bottom: 20px;
 }
 
 .profile-picture {
-    width: 50px;
-    height: 50px;
+    width: 80px;
+    height: 80px;
     border-radius: 50%;
+    margin-bottom: 15px;
+    object-fit: cover;
 }
 
 .profile-name {
@@ -29,8 +33,14 @@
     font-size: 1.1em;
 }
 
+.profile-username {
+    font-size: 0.9em;
+    color: #a3a3a3;
+    font-weight: 400;
+    margin-top: 5px;
+}
+
 .navigation-menu {
-    flex-grow: 1;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -90,4 +100,32 @@
 
 .logout-button svg {
     font-size: 1.2em;
+}
+
+.upload-section {
+    flex-grow: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.upload-button {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    border: none;
+    background-color: #007bff;
+    color: white;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 1.8em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+}
+
+.upload-button:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 16px rgba(0, 123, 255, 0.4);
 }
