@@ -141,8 +141,6 @@ Respiratory-Sound-Classification/
 
 ## 📖 Citation
 
-If you use this dataset in your research, please cite:
-
 ```bibtex
 @dataset{respiratory_sound_db_2019,
   title     = {Respiratory Sound Database},
