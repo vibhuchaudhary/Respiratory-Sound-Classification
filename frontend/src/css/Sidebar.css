@@ -1,0 +1,131 @@
+.sidebar-container {
+    flex: 0 0 25%;
+    max-width: 320px;
+    min-width: 260px;
+    background-color: #1e1f20;
+    display: flex;
+    flex-direction: column;
+    padding: 24px;
+    height: 100vh;
+    box-sizing: border-box;
+}
+
+.profile-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #2f3031;
+    margin-bottom: 20px;
+}
+
+.profile-picture {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    margin-bottom: 15px;
+    object-fit: cover;
+}
+
+.profile-name {
+    margin: 0;
+    font-weight: 500;
+    font-size: 1.1em;
+}
+
+.profile-username {
+    font-size: 0.9em;
+    color: #a3a3a3;
+    font-weight: 400;
+    margin-top: 5px;
+}
+
+.navigation-menu {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.nav-item {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 12px 15px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 1em;
+    color: #e3e3e3;
+    text-decoration: none;
+    transition: background-color 0.2s ease;
+}
+
+.nav-item:hover {
+    background-color: #2f3031;
+}
+
+.nav-item.active {
+    background-color: #3f4041;
+}
+
+.nav-item svg {
+    font-size: 1.2em;
+}
+
+.sidebar-footer {
+    margin-top: auto;
+}
+
+.logout-button {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    width: 100%;
+    padding: 12px 15px;
+    border: none;
+    background: none;
+    color: #e3e3e3;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 1em;
+    font-family: 'Inter', sans-serif;
+    font-weight: 500;
+    text-align: left;
+    transition: background-color 0.2s ease;
+}
+
+.logout-button:hover {
+    background-color: #2f3031;
+}
+
+.logout-button svg {
+    font-size: 1.2em;
+}
+
+.upload-section {
+    flex-grow: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.upload-button {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    border: none;
+    background-color: #007bff;
+    color: white;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 1.8em;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+}
+
+.upload-button:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 16px rgba(0, 123, 255, 0.4);
+}
