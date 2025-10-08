@@ -15,18 +15,19 @@ from chromadb.config import Settings
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 
-# Configure logging
+LOGS_DIR = 'logs'
+os.makedirs(LOGS_DIR, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/lungscope_audit.log'),
+        logging.FileHandler(os.path.join(LOGS_DIR, 'lungscope_audit.log')),
         logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-# Load environment variables
 load_dotenv()
 
 
@@ -34,17 +35,31 @@ class DatabaseManager:
     """Manages PostgreSQL connections for patient data retrieval"""
     
     def __init__(self):
-        """Initialize database connection parameters"""
+        """Initialize and validate database connection parameters from .env"""
+        self.db_user = os.getenv('POSTGRES_USER')
+        self.db_password = os.getenv('POSTGRES_PASSWORD')
+        self.db_name = os.getenv('POSTGRES_DB')
+        
+        if not all([self.db_user, self.db_password, self.db_name]):
+            missing_vars = [
+                var for var, val in 
+                [("POSTGRES_USER", self.db_user), ("POSTGRES_PASSWORD", self.db_password), ("POSTGRES_DB", self.db_name)] 
+                if not val
+            ]
+            error_message = f"FATAL ERROR: Missing required environment variables: {', '.join(missing_vars)}. Please ensure your .env file is in the 'Backend' directory and contains these keys."
+            logger.critical(error_message)
+            raise ValueError(error_message)
+
         self.db_config = {
             'host': os.getenv('POSTGRES_HOST', 'localhost'),
-            'user': os.getenv('POSTGRES_USER'),
-            'password': os.getenv('POSTGRES_PASSWORD'),
-            'database': os.getenv('POSTGRES_DB', 'lungscope_db'),
+            'user': self.db_user,
+            'password': self.db_password,
+            'database': self.db_name,
             'port': int(os.getenv('POSTGRES_PORT', 5432))
         }
         self.conn = None
         logger.info("DatabaseManager initialized")
-    
+
     def connect(self):
         """Establish database connection"""
         try:
@@ -76,7 +91,6 @@ class DatabaseManager:
             
             cursor = self.conn.cursor(cursor_factory=RealDictCursor)
             
-            # Query only necessary medical information (no names, addresses, etc.)
             query = """
             SELECT 
                 patient_id,
@@ -99,17 +113,16 @@ class DatabaseManager:
             cursor.close()
             
             if result:
-                # Convert to dictionary and log access
                 patient_data = dict(result)
                 logger.info(f"Patient data retrieved for ID: {patient_id[:6]}***")
                 return patient_data
             else:
                 logger.warning(f"No patient data found for ID: {patient_id}")
-                return {}
+                return None
                 
         except Exception as e:
             logger.error(f"Error retrieving patient data: {e}")
-            return {}
+            return None
     
     def get_patient_history(self, patient_id: str, limit: int = 5) -> List[Dict[str, Any]]:
         """
@@ -192,6 +205,96 @@ class DatabaseManager:
             
         except Exception as e:
             logger.error(f"Error logging query to audit trail: {e}")
+    
+    def get_patient_for_auth(self, patient_id: str) -> Optional[Dict[str, Any]]:
+        """Get patient for authentication (no password check needed)"""
+        try:
+            if not self.conn:
+                self.connect()
+            
+            cursor = self.conn.cursor(cursor_factory=RealDictCursor)
+            query = "SELECT patient_id FROM patients WHERE patient_id = %s"
+            cursor.execute(query, (patient_id,))
+            result = cursor.fetchone()
+            cursor.close()
+            
+            if result:
+                return dict(result)
+            else:
+                logger.warning(f"Authentication attempt for non-existent patient: {patient_id}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error retrieving patient for auth: {e}")
+            return None
+    
+    def create_patient(self, patient_data: Dict[str, Any]) -> bool:
+        """
+        Inserts a new patient record into the database WITHOUT password.
+        
+        Args:
+            patient_data: A dictionary containing all patient information.
+            
+        Returns:
+            True if creation is successful, False otherwise.
+        """
+        try:
+            if not self.conn:
+                self.connect()
+            
+            cursor = self.conn.cursor()
+            
+            # Handle optional last_consultation_date
+            last_consultation = patient_data.get('last_consultation_date')
+            if last_consultation and last_consultation.strip():
+                try:
+                    datetime.strptime(last_consultation, '%Y-%m-%d')
+                except ValueError:
+                    logger.warning(f"Invalid date format for last_consultation_date: {last_consultation}")
+                    last_consultation = None
+            else:
+                last_consultation = None
+            
+            query = """
+            INSERT INTO patients (
+                patient_id, age_range, gender, smoking_status, 
+                has_hypertension, has_diabetes, has_asthma_history, 
+                previous_respiratory_infections, current_medications, allergies,
+                last_consultation_date
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            """
+            
+            data_tuple = (
+                patient_data['patient_id'],
+                patient_data.get('age_range'),
+                patient_data.get('gender'),
+                patient_data.get('smoking_status'),
+                patient_data.get('has_hypertension', False),
+                patient_data.get('has_diabetes', False),
+                patient_data.get('has_asthma_history', False),
+                patient_data.get('previous_respiratory_infections', 0),
+                patient_data.get('current_medications', ''),
+                patient_data.get('allergies', ''),
+                last_consultation
+            )
+            
+            cursor.execute(query, data_tuple)
+            self.conn.commit()
+            cursor.close()
+            
+            logger.info(f"Successfully registered new patient: {patient_data['patient_id']}")
+            return True
+            
+        except psycopg2.IntegrityError as e:
+            logger.warning(f"Registration failed: Patient ID {patient_data.get('patient_id', 'UNKNOWN')} already exists. Error: {e}")
+            self.conn.rollback()
+            return False
+        except Exception as e:
+            logger.error(f"Error creating patient: {e}")
+            self.conn.rollback()
+            return False
 
 
 class VectorDBManager:
@@ -207,13 +310,11 @@ class VectorDBManager:
         self.persist_directory = persist_directory
         self.collection_name = "medical_knowledge"
         
-        # Initialize OpenAI embeddings
         self.embeddings = OpenAIEmbeddings(
             openai_api_key=os.getenv('OPENAI_API_KEY'),
-            model="text-embedding-3-small"  # Cost-effective embedding model
+            model="text-embedding-3-small"
         )
         
-        # Initialize ChromaDB client
         self.client = chromadb.PersistentClient(
             path=persist_directory,
             settings=Settings(
@@ -222,7 +323,6 @@ class VectorDBManager:
             )
         )
         
-        # Initialize LangChain Chroma vectorstore
         self.vectorstore = None
         self._initialize_vectorstore()
         
@@ -260,22 +360,18 @@ class VectorDBManager:
             List of relevant document chunks with metadata
         """
         try:
-            # Construct search query
             search_query = f"{disease_name}"
             if query:
                 search_query += f" {query}"
             
-            # Metadata filter for disease-specific retrieval
             filter_dict = {"disease": disease_name}
             
-            # Retrieve documents
             docs = self.vectorstore.similarity_search(
                 query=search_query,
                 k=k,
                 filter=filter_dict
             )
             
-            # Format results
             results = []
             for doc in docs:
                 results.append({
@@ -302,7 +398,7 @@ class VectorDBManager:
         
         Args:
             disease: Primary disease classification
-            comorbidities: List of patient comorbidities (e.g., ['hypertension', 'diabetes'])
+            comorbidities: List of patient comorbidities
             k: Number of documents to retrieve per comorbidity
             
         Returns:
@@ -380,18 +476,15 @@ class DataRetrievalAgent:
             Complete context dictionary for LLM
         """
         try:
-            # 1. Get patient medical data
             patient_data = self.db_manager.get_patient_data(patient_id)
             patient_history = self.db_manager.get_patient_history(patient_id, limit=3)
             
-            # 2. Get disease-specific medical knowledge
             disease_context = self.vector_manager.retrieve_disease_context(
                 disease_name=disease_classification,
                 query=user_query,
                 k=5
             )
             
-            # 3. Get comorbidity context if applicable
             comorbidity_context = []
             if patient_data:
                 comorbidities = []
@@ -407,7 +500,6 @@ class DataRetrievalAgent:
                         k=2
                     )
             
-            # 4. Compile full context
             full_context = {
                 "patient_data": patient_data,
                 "patient_history": patient_history,
@@ -436,12 +528,9 @@ class DataRetrievalAgent:
         logger.info("DataRetrievalAgent cleanup complete")
 
 
-# Example usage
 if __name__ == "__main__":
-    # Test database connections
     agent = DataRetrievalAgent()
     
-    # Example: Retrieve context for a patient with COPD classification
     context = agent.retrieve_full_context(
         patient_id="PATIENT_12345",
         disease_classification="COPD",

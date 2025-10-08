@@ -3,21 +3,38 @@ main.py - FastAPI Backend for LungScope AI Healthcare Assistant
 Connects Audio Classifier, LLM Agent, and Database for frontend integration
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Body, Query, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import shutil
+from contextlib import asynccontextmanager
+from jose import jwt
 
 from llm_agent import LungScopeChatbot
 from database import DataRetrievalAgent
 from audio_classifier import RespiratoryAudioClassifier
 
+# ---------------- JWT CONFIG ---------------- #
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours
+
+def create_access_token(data: dict):
+    """Create JWT access token"""
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+# ---------------- LOGGING ---------------- #
+os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -28,43 +45,29 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title="LungScope AI API",
-    description="AI Healthcare Assistant for Respiratory Analysis and Smart Diagnostics",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
+# ---------------- GLOBAL VARIABLES ---------------- #
 chatbot = None
 audio_classifier = None
 
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize all agents and create necessary directories"""
+# ---------------- LIFESPAN HANDLER ---------------- #
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize all agents and resources on startup; clean up on shutdown."""
     global chatbot, audio_classifier
-    logger.info("LungScope AI Backend starting up...")
-    
+
+    logger.info("🚀 LungScope AI Backend starting up...")
     os.makedirs("uploads/audio", exist_ok=True)
     os.makedirs("models", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
     logger.info("✓ Directories created")
-    
+
     try:
-        chatbot = LungScopeChatbot(temperature=0.3, model_name="gpt-4.1-nano")
+        chatbot = LungScopeChatbot(temperature=0.3, model_name="gpt-4")
         logger.info("✓ LLM Chatbot initialized")
     except Exception as e:
         logger.error(f"✗ Failed to initialize chatbot: {e}")
-    
+        chatbot = None
+
     try:
         audio_classifier = RespiratoryAudioClassifier(
             model_path="models/trained_model.keras",
@@ -78,21 +81,61 @@ async def startup_event():
         logger.info("✓ Audio Classifier initialized")
     except Exception as e:
         logger.error(f"✗ Failed to initialize audio classifier: {e}")
-    
-    logger.info("🚀 LungScope AI Backend is ready!")
+        audio_classifier = None
 
+    yield
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    logger.info("LungScope AI Backend shutting down...")
+    logger.info("🧹 LungScope AI Backend shutting down...")
     if chatbot:
-        chatbot.cleanup()
+        try:
+            chatbot.cleanup()
+        except:
+            pass
     logger.info("✓ Cleanup complete")
 
 
+# ---------------- FASTAPI APP ---------------- #
+app = FastAPI(
+    title="LungScope AI API",
+    description="AI Healthcare Assistant for Respiratory Analysis and Smart Diagnostics",
+    version="1.0.2",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan
+)
+
+# ---------------- MIDDLEWARE ---------------- #
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------------- PYDANTIC MODELS ---------------- #
+class PatientCreate(BaseModel):
+    patient_id: str
+    age_range: str
+    gender: str
+    smoking_status: str
+    has_hypertension: bool
+    has_diabetes: bool
+    has_asthma_history: bool
+    previous_respiratory_infections: int
+    current_medications: str
+    allergies: str
+    last_consultation_date: Optional[str] = None
+
+class UserLogin(BaseModel):
+    username: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    user_info: Dict[str, Any]
+
 class ChatRequest(BaseModel):
-    """Chat request from frontend"""
     patient_id: str = Field(..., example="PATIENT_12345")
     query: str = Field(..., example="What should I do about my breathing difficulty?")
     audio_result: Optional[Dict[str, Any]] = Field(None, example={
@@ -101,28 +144,20 @@ class ChatRequest(BaseModel):
         "severity": "moderate"
     })
 
-
 class ChatResponse(BaseModel):
-    """Chat response to frontend"""
     response: str
     confidence: float
     disease_classification: Optional[str] = None
     follow_up: str
     timestamp: str
-    
-    model_config = {"json_schema_extra": {"examples": []}}
-
 
 class AudioAnalysisResponse(BaseModel):
-    """Audio analysis response"""
     disease: str
     confidence: float
     severity: str
     timestamp: str
 
-
 class PatientDataResponse(BaseModel):
-    """Patient data response"""
     patient_id: str
     age_range: Optional[str]
     gender: Optional[str]
@@ -131,17 +166,20 @@ class PatientDataResponse(BaseModel):
     current_medications: Optional[str]
     allergies: Optional[str]
 
+# ---------------- ENDPOINTS ---------------- #
 
 @app.get("/", tags=["General"])
 async def root():
     """Root endpoint"""
     return {
         "message": "🏥 LungScope AI API",
-        "version": "1.0.0",
+        "version": "1.0.2",
         "status": "operational",
         "endpoints": {
             "docs": "/docs",
             "health": "/health",
+            "register": "/register",
+            "login": "/login",
             "chat": "/api/chat",
             "audio_analysis": "/api/analyze-audio",
             "full_analysis": "/api/full-analysis",
@@ -162,6 +200,86 @@ async def health_check():
             "database": True
         }
     }
+
+
+@app.post("/register", tags=["Authentication"])
+async def register_patient(patient_data: PatientCreate):
+    """Register a new patient (no password required)"""
+    db_data = patient_data.model_dump()
+    
+    agent = DataRetrievalAgent()
+    try:
+        success = agent.db_manager.create_patient(db_data)
+        if not success:
+            raise HTTPException(
+                status_code=409,
+                detail="Patient with this ID already exists. Please choose a different ID."
+            )
+        
+        logger.info(f"New patient registered: {patient_data.patient_id}")
+        return JSONResponse(
+            content={
+                "message": "Patient registered successfully! You can now login with your Patient ID.",
+                "patient_id": patient_data.patient_id
+            },
+            status_code=201
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Registration error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Registration failed: {str(e)}"
+        )
+    finally:
+        agent.cleanup()
+
+
+@app.post("/login", response_model=Token, tags=["Authentication"])
+async def login_for_access_token(form_data: UserLogin):
+    """Login with just username/patient_id (no password required)"""
+    agent = DataRetrievalAgent()
+    try:
+        user = agent.db_manager.get_patient_for_auth(form_data.username)
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail="Patient ID not found. Please check your ID or register."
+            )
+        
+        patient_profile = agent.db_manager.get_patient_data(form_data.username)
+        if not patient_profile:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to load patient profile."
+            )
+        
+        access_token = create_access_token(data={"sub": user["patient_id"]})
+        
+        logger.info(f"Patient logged in: {form_data.username}")
+        
+        return Token(
+            access_token=access_token,
+            token_type="bearer",
+            user_info={
+                "username": patient_profile.get("patient_id"),
+                "name": f"Patient {patient_profile.get('patient_id')[:8]}...",
+                "avatar": "https://via.placeholder.com/150/4A90E2/FFFFFF?text=Patient",
+                "age_range": patient_profile.get("age_range"),
+                "gender": patient_profile.get("gender")
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Login failed: {str(e)}"
+        )
+    finally:
+        agent.cleanup()
 
 
 @app.post("/api/chat", response_model=ChatResponse, tags=["Chatbot"])
@@ -309,7 +427,7 @@ async def complete_respiratory_analysis(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/patient/{patient_id}", tags=["Patient Data"])
+@app.get("/api/patient/{patient_id}", response_model=PatientDataResponse, tags=["Patient Data"])
 async def get_patient_data(patient_id: str):
     """
     Retrieve patient medical information from database
@@ -428,8 +546,26 @@ async def cleanup_old_uploads(days_old: int = 7):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ---------------- ERROR HANDLERS ---------------- #
+@app.exception_handler(404)
+async def not_found_handler(request, exc):
+    return JSONResponse(
+        status_code=404,
+        content={
+            "detail": "Endpoint not found",
+            "path": str(request.url),
+            "available_endpoints": "/docs"
+        }
+    )
+
+
+# ---------------- MAIN EXECUTION BLOCK ---------------- #
 if __name__ == "__main__":
     import uvicorn
+    
+    logger.info("Starting LungScope AI Backend Server...")
+    logger.info("API Documentation available at: http://localhost:8000/docs")
+    
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
