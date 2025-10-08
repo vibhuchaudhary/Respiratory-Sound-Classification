@@ -1,78 +1,196 @@
 import React, { useState, useRef, useEffect } from 'react';
 import '../css/Chatbot.css';
-import { FiUser, FiCpu, FiSend } from 'react-icons/fi';
+import { FiUser, FiCpu, FiSend, FiPaperclip, FiXCircle } from 'react-icons/fi';
 
-const Chatbot = () => {
+const Chatbot = ({ user }) => {
   const [messages, setMessages] = useState([
-    { text: "Hello! How can I help you today?", sender: "bot" }
+    { 
+      text: "Hello! I'm A.I.R.A., your AI health assistant. You can ask me questions or attach an audio file for respiratory analysis.", 
+      sender: "bot" 
+    }
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [audioFile, setAudioFile] = useState(null);
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
 
+  // Auto-scroll to newest message
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [messages]);
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
 
-  const sendToAI = async (userText) => {
+  const handleFileChange = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    // Check file type
+    const validTypes = ['audio/wav', 'audio/mpeg', 'audio/mp3', 'audio/flac'];
+    const validExtensions = /\.(wav|mp3|flac)$/i;
+    
+    if (!validTypes.includes(file.type) && !file.name.match(validExtensions)) {
+      alert('Please select a valid audio file (WAV, MP3, or FLAC)');
+      return;
+    }
+    
+    setAudioFile(file);
+  };
+
+  const handleSend = async () => {
+    if ((!input.trim() && !audioFile) || loading || !user) return;
+
+    const userMessage = input.trim() 
+      ? { text: input, sender: "user" } 
+      : { text: "[Audio file attached]", sender: "user" };
+    
+    setMessages(prev => [...prev, userMessage]);
+    
+    const messageToSend = input.trim() || "Please analyze this audio file";
+    const fileToSend = audioFile;
+    
+    setInput("");
+    setAudioFile(null);
     setLoading(true);
+
     try {
-      const response = await fetch("http://localhost:5000/chat", {
+      let audioResult = null;
+
+      // Step 1: Analyze audio if present
+      if (fileToSend) {
+        const formData = new FormData();
+        formData.append('patient_id', user.username);
+        formData.append('user_query', messageToSend);
+        formData.append('file', fileToSend);
+
+        const audioResponse = await fetch("http://localhost:8000/api/analyze-audio", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!audioResponse.ok) {
+          const errorData = await audioResponse.json();
+          throw new Error(errorData.detail || 'Audio analysis failed');
+        }
+        
+        const audioData = await audioResponse.json();
+        audioResult = audioData;
+        
+        const analysisInfo = `🔬 Audio Analysis: ${audioResult.disease} (Confidence: ${(audioResult.confidence * 100).toFixed(1)}%)`;
+        setMessages(prev => [...prev, { text: analysisInfo, sender: 'bot', isInfo: true }]);
+      }
+
+      // Step 2: Get AI response
+      const chatResponse = await fetch("http://localhost:8000/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userText }),
+        body: JSON.stringify({
+          patient_id: user.username,
+          query: messageToSend,
+          audio_result: audioResult
+        }),
       });
-      const data = await response.json();
-      return data.reply;
-    } catch {
-      return "Error connecting to AI backend.";
+
+      if (!chatResponse.ok) {
+        const errorData = await chatResponse.json();
+        throw new Error(errorData.detail || 'Failed to get AI response');
+      }
+      
+      const chatData = await chatResponse.json();
+      const botMessage = { text: chatData.response, sender: "bot" };
+      setMessages(prev => [...prev, botMessage]);
+
+    } catch (error) {
+      console.error("API Error:", error);
+      const errorMessage = { 
+        text: `Sorry, an error occurred: ${error.message}. Please make sure the backend is running.`, 
+        sender: "bot" 
+      };
+      setMessages(prev => [...prev, errorMessage]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || loading) return;
-    const userMessage = { text: input, sender: "user" };
-    setMessages(prev => [...prev, userMessage]);
-    setInput("");
-    const botReply = await sendToAI(input);
-    setMessages(prev => [...prev, { text: botReply, sender: "bot" }]);
-  };
-
   return (
     <div className="chatbot-container">
       <div className="chatbot-header">
-        <h2>Conversation</h2>
+        <h2>⚕️ Welcome to A.I.R.A., {user.username}</h2>
+        <p>Your Personal AI Health Companion</p>
       </div>
+      
       <div className="chatbot-messages">
         {messages.map((message, index) => (
           <div key={index} className={`message-wrapper ${message.sender}`}>
-            <div className="message-icon">
-              {message.sender === "user" ? <FiUser /> : <FiCpu />}
+            {!message.isInfo && (
+              <div className="message-icon">
+                {message.sender === "user" ? <FiUser /> : <FiCpu />}
+              </div>
+            )}
+            <div className={`message-bubble ${message.isInfo ? 'info' : ''}`}>
+              {message.text}
             </div>
-            <div className="message-bubble">{message.text}</div>
           </div>
         ))}
+        
+        {loading && (
+          <div className="message-wrapper bot">
+            <div className="message-icon"><FiCpu /></div>
+            <div className="message-bubble thinking">Analyzing...</div>
+          </div>
+        )}
+        
         <div ref={messagesEndRef}></div>
       </div>
+      
       <div className="chatbot-input-area">
+        {audioFile && (
+          <div className="file-preview">
+            <span>🎙️ {audioFile.name}</span>
+            <button onClick={() => setAudioFile(null)} type="button">
+              <FiXCircle />
+            </button>
+          </div>
+        )}
+        
         <div className="chatbot-input-wrapper">
           <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept="audio/wav,audio/mpeg,audio/mp3,audio/flac,.wav,.mp3,.flac"
+            style={{ display: 'none' }}
+          />
+          
+          <button 
+            className="attach-button" 
+            onClick={() => fileInputRef.current.click()} 
+            disabled={loading}
+            type="button"
+            title="Attach audio file"
+          >
+            <FiPaperclip />
+          </button>
+          
+          <input
             type="text"
+            className="chatbot-input"
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyPress={e => e.key === "Enter" && handleSend()}
-            placeholder="Type your message here..."
+            placeholder="Ask a question or attach an audio file..."
             disabled={loading}
           />
-          <button className="send-button" onClick={handleSend} disabled={loading || !input.trim()}>
+          
+          <button 
+            className="send-button" 
+            onClick={handleSend} 
+            disabled={loading || (!input.trim() && !audioFile)}
+            type="button"
+            title="Send message"
+          >
             <FiSend />
           </button>
         </div>
-        {loading && <div className="chatbot-loading">Thinking...</div>}
       </div>
     </div>
   );
