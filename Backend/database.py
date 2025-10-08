@@ -105,11 +105,11 @@ class DatabaseManager:
                 return patient_data
             else:
                 logger.warning(f"No patient data found for ID: {patient_id}")
-                return None
+                return {}
                 
         except Exception as e:
             logger.error(f"Error retrieving patient data: {e}")
-            return None
+            return {}
     
     def get_patient_history(self, patient_id: str, limit: int = 5) -> List[Dict[str, Any]]:
         """

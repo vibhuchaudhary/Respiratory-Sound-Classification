@@ -35,7 +35,7 @@ class RespiratoryAudioClassifier:
     
     def __init__(
         self, 
-        model_path: str = "models/respiratory_classifier.keras",
+        model_path: str = "models/trained_model.keras",
         sample_rate: int = 22050,
         duration: float = 20.0,
         n_mels: int = 128,
@@ -115,6 +115,12 @@ class RespiratoryAudioClassifier:
             Normalized mel-spectrogram (n_mels, target_length)
         """
         try:
+            # DEBUG: Audio statistics
+            logger.info(f"[DEBUG] Audio stats - Min: {audio.min():.6f}, Max: {audio.max():.6f}, Mean: {audio.mean():.6f}, Std: {audio.std():.6f}")
+            logger.info(f"[DEBUG] Audio length: {len(audio)} samples ({len(audio)/self.sample_rate:.2f} seconds)")
+            logger.info(f"[DEBUG] Audio is silent: {np.all(audio == 0)}")
+            logger.info(f"[DEBUG] Non-zero samples: {np.count_nonzero(audio)}/{len(audio)}")
+            
             mel_spec = librosa.feature.melspectrogram(
                 y=audio,
                 sr=self.sample_rate,
@@ -124,12 +130,24 @@ class RespiratoryAudioClassifier:
                 power=2.0
             )
             
+            # DEBUG: Raw mel-spectrogram
+            logger.info(f"[DEBUG] Raw mel-spec shape: {mel_spec.shape}")
+            logger.info(f"[DEBUG] Raw mel-spec - Min: {mel_spec.min():.6f}, Max: {mel_spec.max():.6f}, Mean: {mel_spec.mean():.6f}")
+            
             mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+            
+            # DEBUG: dB scale mel-spectrogram
+            logger.info(f"[DEBUG] Mel-spec dB range - Min: {mel_spec_db.min():.2f} dB, Max: {mel_spec_db.max():.2f} dB, Mean: {mel_spec_db.mean():.2f} dB")
             
             mel_spec_norm = (mel_spec_db - mel_spec_db.min()) / (mel_spec_db.max() - mel_spec_db.min() + 1e-8)
             
+            # DEBUG: Normalized mel-spectrogram
+            logger.info(f"[DEBUG] Normalized mel-spec - Min: {mel_spec_norm.min():.6f}, Max: {mel_spec_norm.max():.6f}, Mean: {mel_spec_norm.mean():.6f}, Std: {mel_spec_norm.std():.6f}")
+            logger.info(f"[DEBUG] Normalized shape before padding: {mel_spec_norm.shape}")
+            
             if mel_spec_norm.shape[1] < self.target_length:
                 pad_width = self.target_length - mel_spec_norm.shape[1]
+                logger.info(f"[DEBUG] Padding needed: {pad_width} frames")
                 mel_spec_norm = np.pad(
                     mel_spec_norm, 
                     ((0, 0), (0, pad_width)), 
@@ -137,15 +155,20 @@ class RespiratoryAudioClassifier:
                     constant_values=0
                 )
             elif mel_spec_norm.shape[1] > self.target_length:
+                logger.info(f"[DEBUG] Trimming from {mel_spec_norm.shape[1]} to {self.target_length} frames")
                 mel_spec_norm = mel_spec_norm[:, :self.target_length]
             
-            logger.info(f"Mel-spectrogram extracted, shape: {mel_spec_norm.shape}")
+            # DEBUG: Final shape and statistics
+            logger.info(f"[DEBUG] Final mel-spec shape: {mel_spec_norm.shape}")
+            logger.info(f"[DEBUG] Final statistics - Min: {mel_spec_norm.min():.6f}, Max: {mel_spec_norm.max():.6f}, Mean: {mel_spec_norm.mean():.6f}")
+            logger.info(f"[DEBUG] Unique values in mel-spec: {len(np.unique(mel_spec_norm))}")
+            
             return mel_spec_norm
             
         except Exception as e:
             logger.error(f"Error extracting mel-spectrogram: {e}")
             return np.zeros((self.n_mels, self.target_length))
-    
+
     def preprocess_for_inference(self, audio_path: str) -> np.ndarray:
         """
         Preprocess audio for model inference (NO augmentation during inference)
@@ -156,13 +179,28 @@ class RespiratoryAudioClassifier:
         Returns:
             Preprocessed mel-spectrogram ready for model input
         """
+        logger.info(f"[DEBUG] ========== Starting preprocessing for: {audio_path} ==========")
+        
         audio = self.load_audio(audio_path)
         mel_spec = self.extract_mel_spectrogram(audio)
-        mel_spec_expanded = np.expand_dims(mel_spec, axis=-1)
-        mel_spec_batch = np.expand_dims(mel_spec_expanded, axis=0)
         
-        logger.info(f"Preprocessed for inference, final shape: {mel_spec_batch.shape}")
+        # DEBUG: Before expansion
+        logger.info(f"[DEBUG] Mel-spec before expansion: shape={mel_spec.shape}, dtype={mel_spec.dtype}")
+        
+        mel_spec_expanded = np.expand_dims(mel_spec, axis=-1)
+        logger.info(f"[DEBUG] After adding channel dim: {mel_spec_expanded.shape}")
+        
+        mel_spec_batch = np.expand_dims(mel_spec_expanded, axis=0)
+        logger.info(f"[DEBUG] After adding batch dim: {mel_spec_batch.shape}")
+        
+        # DEBUG: Final input statistics
+        logger.info(f"[DEBUG] Final input to model - Min: {mel_spec_batch.min():.6f}, Max: {mel_spec_batch.max():.6f}, Mean: {mel_spec_batch.mean():.6f}")
+        logger.info(f"[DEBUG] Expected input shape: (1, {self.n_mels}, {self.target_length}, 1)")
+        logger.info(f"[DEBUG] Actual input shape: {mel_spec_batch.shape}")
+        logger.info(f"[DEBUG] ========== Preprocessing complete ==========\n")
+        
         return mel_spec_batch
+
     
     def predict(self, audio_path: str) -> Dict[str, Any]:
         """
@@ -173,6 +211,10 @@ class RespiratoryAudioClassifier:
             
             features = self.preprocess_for_inference(audio_path)
             predictions = self.model.predict(features, verbose=0)
+
+            logger.info(f"[CRITICAL] Raw prediction probabilities: {predictions[0]}")
+            logger.info(f"[CRITICAL] Prediction sum (should be ~1.0): {predictions[0].sum():.6f}")
+            logger.info(f"[CRITICAL] All predictions: {predictions[0].tolist()}")
             
             predicted_class_idx = np.argmax(predictions[0])
             confidence = float(predictions[0][predicted_class_idx])
@@ -239,7 +281,7 @@ class RespiratoryAudioClassifier:
 
 if __name__ == "__main__":
     classifier = RespiratoryAudioClassifier(
-        model_path="models/respiratory_classifier.keras",
+        model_path="models/trained_model.keras",
         sample_rate=22050,
         duration=20.0,
         n_mels=128,

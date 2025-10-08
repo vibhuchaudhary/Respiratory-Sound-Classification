@@ -3,7 +3,7 @@ main.py - FastAPI Backend for LungScope AI Healthcare Assistant
 Connects Audio Classifier, LLM Agent, and Database for frontend integration
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Body
+from fastapi import FastAPI, File, UploadFile, HTTPException, Body, Query, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -52,7 +52,6 @@ audio_classifier = None
 async def startup_event():
     """Initialize all agents and create necessary directories"""
     global chatbot, audio_classifier
-    
     logger.info("LungScope AI Backend starting up...")
     
     os.makedirs("uploads/audio", exist_ok=True)
@@ -61,14 +60,14 @@ async def startup_event():
     logger.info("✓ Directories created")
     
     try:
-        chatbot = LungScopeChatbot(temperature=0.3, model_name="gpt-4")
+        chatbot = LungScopeChatbot(temperature=0.3, model_name="gpt-4.1-nano")
         logger.info("✓ LLM Chatbot initialized")
     except Exception as e:
         logger.error(f"✗ Failed to initialize chatbot: {e}")
     
     try:
         audio_classifier = RespiratoryAudioClassifier(
-            model_path="models/respiratory_classifier.keras",
+            model_path="models/trained_model.keras",
             sample_rate=22050,
             duration=20.0,
             n_mels=128,
@@ -107,9 +106,11 @@ class ChatResponse(BaseModel):
     """Chat response to frontend"""
     response: str
     confidence: float
-    disease_classification: Optional[str]
+    disease_classification: Optional[str] = None
     follow_up: str
     timestamp: str
+    
+    model_config = {"json_schema_extra": {"examples": []}}
 
 
 class AudioAnalysisResponse(BaseModel):
@@ -194,8 +195,8 @@ async def chat_with_ai(request: ChatRequest):
 
 @app.post("/api/analyze-audio", response_model=AudioAnalysisResponse, tags=["Audio Analysis"])
 async def analyze_respiratory_audio(
-    patient_id: str = Field(..., description="Patient identifier"),
-    file: UploadFile = File(..., description="Audio file (.wav, .mp3, .flac)")
+    file: UploadFile = File(..., description="Audio file (.wav, .mp3, .flac)"),
+    patient_id: str = Form(..., description="Patient identifier")
 ):
     """
     Analyze respiratory audio using trained deep learning model
@@ -248,9 +249,9 @@ async def analyze_respiratory_audio(
 
 @app.post("/api/full-analysis", tags=["Complete Analysis"])
 async def complete_respiratory_analysis(
-    patient_id: str = Field(..., description="Patient identifier"),
-    query: str = Field(..., description="Patient's medical question"),
-    file: UploadFile = File(..., description="Respiratory audio file")
+    file: UploadFile = File(..., description="Respiratory audio file"),
+    patient_id: str = Form(..., description="Patient identifier"),
+    query: str = Form(..., description="Patient's medical question")
 ):
     """
     Complete end-to-end analysis workflow:
