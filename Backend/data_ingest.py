@@ -1,5 +1,5 @@
 """
-data_ingest.py - Medical Knowledge Base Ingestion for LungScope
+data_ingest.py - Medical Knowledge Base Ingestion for A.I.R.A
 Loads PDF/text medical documents into ChromaDB with disease-specific metadata
 """
 
@@ -15,14 +15,12 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 from langchain.schema import Document
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Load environment variables
 load_dotenv()
 
 
@@ -31,7 +29,6 @@ class MedicalDataIngestor:
     Ingest medical documents into ChromaDB with disease-specific metadata tagging
     """
     
-    # Disease categories for LungScope
     DISEASE_CATEGORIES = [
         "Bronchiectasis",
         "Bronchiolitis",
@@ -41,7 +38,6 @@ class MedicalDataIngestor:
         "URTI"
     ]
     
-    # Content types for metadata
     CONTENT_TYPES = [
         "symptoms",
         "treatment",
@@ -69,16 +65,14 @@ class MedicalDataIngestor:
         self.vector_db_path = vector_db_path
         self.collection_name = collection_name
         
-        # Initialize OpenAI embeddings
         self.embeddings = OpenAIEmbeddings(
             openai_api_key=os.getenv('OPENAI_API_KEY'),
             model="text-embedding-3-small"
         )
         
-        # Initialize text splitter for semantic chunking
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,  # Characters per chunk
-            chunk_overlap=200,  # Overlap for context preservation
+            chunk_size=1000, 
+            chunk_overlap=200, 
             length_function=len,
             separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""]
         )
@@ -100,7 +94,6 @@ class MedicalDataIngestor:
         try:
             documents = []
             
-            # Load PDFs
             if file_pattern == "*.pdf":
                 loader = DirectoryLoader(
                     self.data_directory,
@@ -111,7 +104,6 @@ class MedicalDataIngestor:
                 documents.extend(loader.load())
                 logger.info(f"Loaded {len(documents)} PDF documents")
             
-            # Load text files
             elif file_pattern == "*.txt":
                 loader = DirectoryLoader(
                     self.data_directory,
@@ -185,13 +177,8 @@ class MedicalDataIngestor:
         enriched_docs = []
         
         for doc in documents:
-            # Extract disease category
             disease = self.extract_disease_from_content(doc.page_content)
-            
-            # Extract content type
             content_type = self.extract_content_type(doc.page_content)
-            
-            # Add metadata
             doc.metadata.update({
                 "disease": disease,
                 "content_type": content_type,
@@ -215,15 +202,12 @@ class MedicalDataIngestor:
             ChromaDB vectorstore
         """
         try:
-            # Split documents into chunks
             logger.info("Splitting documents into chunks...")
             text_chunks = self.text_splitter.split_documents(documents)
             logger.info(f"Created {len(text_chunks)} text chunks")
             
-            # Add metadata to chunks
             enriched_chunks = self.add_metadata(text_chunks)
             
-            # Create or load vectorstore
             logger.info("Creating embeddings and ingesting into ChromaDB...")
             vectorstore = Chroma.from_documents(
                 documents=enriched_chunks,
@@ -250,7 +234,6 @@ class MedicalDataIngestor:
         
         all_documents = []
         
-        # Load all document types
         for pattern in file_patterns:
             docs = self.load_documents(file_pattern=pattern)
             all_documents.extend(docs)
@@ -261,12 +244,10 @@ class MedicalDataIngestor:
         
         logger.info(f"Total documents loaded: {len(all_documents)}")
         
-        # Ingest to vector database
         vectorstore = self.ingest_to_vectordb(all_documents)
         
         logger.info("Ingestion pipeline completed successfully!")
         
-        # Display statistics
         self.display_stats(vectorstore)
     
     def display_stats(self, vectorstore: Chroma):
@@ -290,14 +271,12 @@ class MedicalDataIngestor:
 
 def main():
     """Main function to run ingestion"""
-    # Initialize ingestor
     ingestor = MedicalDataIngestor(
         data_directory="./data/medical_knowledge",
         vector_db_path="./vector_db/chroma_db",
         collection_name="medical_knowledge"
     )
     
-    # Run ingestion for PDFs and text files
     ingestor.run_ingestion(file_patterns=["*.pdf", "*.txt"])
 
 

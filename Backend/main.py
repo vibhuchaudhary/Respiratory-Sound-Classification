@@ -1,12 +1,14 @@
 """
-main.py - FastAPI Backend for LungScope AI Healthcare Assistant
+main.py - FastAPI Backend for A.I.R.A. (AI Respiratory Assistant)
 Connects Audio Classifier, LLM Agent, and Database for frontend integration
 """
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from fastapi.staticfiles import StaticFiles
 from typing import Optional, Dict, Any, List
 import os
 import logging
@@ -14,6 +16,9 @@ from datetime import datetime, timedelta
 import uuid
 import shutil
 from contextlib import asynccontextmanager
+from jose import jwt
+from contextlib import asynccontextmanager
+
 from jose import jwt
 
 from llm_agent import LungScopeChatbot
@@ -55,17 +60,20 @@ async def lifespan(app: FastAPI):
     """Initialize all agents and resources on startup; clean up on shutdown."""
     global chatbot, audio_classifier
 
-    logger.info("🚀 LungScope AI Backend starting up...")
+    logger.info("🚀 A.I.R.A Backend starting up...")
     os.makedirs("uploads/audio", exist_ok=True)
     os.makedirs("models", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
     logger.info("✓ Directories created")
+
 
     try:
         chatbot = LungScopeChatbot(temperature=0.3, model_name="gpt-4")
         logger.info("✓ LLM Chatbot initialized")
     except Exception as e:
         logger.error(f"✗ Failed to initialize chatbot: {e}")
+        chatbot = None
+
         chatbot = None
 
     try:
@@ -85,8 +93,17 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    logger.info("🧹 LungScope AI Backend shutting down...")
+    logger.info("🧹 A.I.R.A Backend shutting down...")
+    audio_classifier = None
+
+    yield
+
+    logger.info("🧹 A.I.R.A AI Backend shutting down...")
     if chatbot:
+        try:
+            chatbot.cleanup()
+        except:
+            pass
         try:
             chatbot.cleanup()
         except:
@@ -96,7 +113,26 @@ async def lifespan(app: FastAPI):
 
 # ---------------- FASTAPI APP ---------------- #
 app = FastAPI(
-    title="LungScope AI API",
+    title="A.I.R.A API",
+    description="AI Healthcare Assistant for Respiratory Analysis and Smart Diagnostics",
+    version="1.0.2",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan
+)
+
+# ---------------- MIDDLEWARE ---------------- #
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------------- FASTAPI APP ---------------- #
+app = FastAPI(
+    title="A.I.R.A API",
     description="AI Healthcare Assistant for Respiratory Analysis and Smart Diagnostics",
     version="1.0.2",
     docs_url="/docs",
@@ -126,6 +162,7 @@ class PatientCreate(BaseModel):
     current_medications: str
     allergies: str
     last_consultation_date: Optional[str] = None
+    avatar: Optional[str] = None
 
 class UserLogin(BaseModel):
     username: str
@@ -146,10 +183,10 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str
-    confidence: float
+    confidence: Optional[float] = None
     disease_classification: Optional[str] = None
-    follow_up: str
-    timestamp: str
+    follow_up: Optional[str] = None
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 class AudioAnalysisResponse(BaseModel):
     disease: str
@@ -165,15 +202,15 @@ class PatientDataResponse(BaseModel):
     comorbidities: List[str]
     current_medications: Optional[str]
     allergies: Optional[str]
+    avatar: Optional[str] = None
 
 # ---------------- ENDPOINTS ---------------- #
-
 @app.get("/", tags=["General"])
 async def root():
     """Root endpoint"""
     return {
-        "message": "🏥 LungScope AI API",
-        "version": "1.0.2",
+        "message": "A.I.R.A API",
+        "version": "1.0.1",
         "status": "operational",
         "endpoints": {
             "docs": "/docs",
@@ -187,46 +224,101 @@ async def root():
         }
     }
 
-
+# ---------------- HEALTH CHECK ---------------- #
 @app.get("/health", tags=["General"])
 async def health_check():
     """Health check endpoint"""
-    return {
-        "status": "healthy",
+    global chatbot, audio_classifier
+    
+    return { 
+        "status": "healthy", 
         "timestamp": datetime.now().isoformat(),
         "services": {
-            "chatbot": chatbot is not None,
-            "audio_classifier": audio_classifier is not None and audio_classifier.model is not None,
-            "database": True
+            "chatbot": "available" if chatbot else "unavailable",
+            "audio_classifier": "available" if audio_classifier else "unavailable"
         }
     }
 
-
+# ---------------- AUTHENTICATION ---------------- #
 @app.post("/register", tags=["Authentication"])
-async def register_patient(patient_data: PatientCreate):
-    """Register a new patient (no password required)"""
-    db_data = patient_data.model_dump()
+async def register_patient(
+    patient_id: str = Form(...),
+    age_range: str = Form(...),
+    gender: str = Form(...),
+    smoking_status: str = Form(...),
+    has_hypertension: bool = Form(False),
+    has_diabetes: bool = Form(False),
+    has_asthma_history: bool = Form(False),
+    previous_respiratory_infections: int = Form(0),
+    current_medications: str = Form(""),
+    allergies: str = Form(""),
+    last_consultation_date: Optional[str] = Form(None),
+    avatar: UploadFile = File(None)
+):
+    """Register a new patient with optional avatar upload"""
+    
+    avatar_path = None
+    if avatar:
+        # Validate file type
+        allowed_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+        file_ext = os.path.splitext(avatar.filename)[1].lower()
+        
+        if file_ext not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid image format. Allowed formats: {', '.join(allowed_extensions)}"
+            )
+        
+        # Save avatar
+        os.makedirs("uploads/avatars", exist_ok=True)
+        avatar_filename = f"{patient_id}_{uuid.uuid4()}{file_ext}"
+        avatar_path = os.path.join("uploads/avatars", avatar_filename)
+        
+        with open(avatar_path, "wb") as buffer:
+            shutil.copyfileobj(avatar.file, buffer)
+        
+        avatar_path = f"/uploads/avatars/{avatar_filename}"
+    
+    db_data = {
+        'patient_id': patient_id,
+        'age_range': age_range,
+        'gender': gender,
+        'smoking_status': smoking_status,
+        'has_hypertension': has_hypertension,
+        'has_diabetes': has_diabetes,
+        'has_asthma_history': has_asthma_history,
+        'previous_respiratory_infections': previous_respiratory_infections,
+        'current_medications': current_medications,
+        'allergies': allergies,
+        'last_consultation_date': last_consultation_date,
+        'avatar': avatar_path
+    }
     
     agent = DataRetrievalAgent()
     try:
         success = agent.db_manager.create_patient(db_data)
         if not success:
+            if avatar_path and os.path.exists(avatar_path.lstrip('/')):
+                os.remove(avatar_path.lstrip('/'))
             raise HTTPException(
                 status_code=409,
                 detail="Patient with this ID already exists. Please choose a different ID."
             )
         
-        logger.info(f"New patient registered: {patient_data.patient_id}")
+        logger.info(f"New patient registered: {patient_id}")
         return JSONResponse(
             content={
                 "message": "Patient registered successfully! You can now login with your Patient ID.",
-                "patient_id": patient_data.patient_id
+                "patient_id": patient_id,
+                "avatar": avatar_path
             },
             status_code=201
         )
     except HTTPException:
         raise
     except Exception as e:
+        if avatar_path and os.path.exists(avatar_path.lstrip('/')):
+            os.remove(avatar_path.lstrip('/'))
         logger.error(f"Registration error: {e}")
         raise HTTPException(
             status_code=500,
@@ -235,7 +327,7 @@ async def register_patient(patient_data: PatientCreate):
     finally:
         agent.cleanup()
 
-
+# ---------------- AUTHENTICATION ---------------- #
 @app.post("/login", response_model=Token, tags=["Authentication"])
 async def login_for_access_token(form_data: UserLogin):
     """Login with just username/patient_id (no password required)"""
@@ -257,6 +349,8 @@ async def login_for_access_token(form_data: UserLogin):
         
         access_token = create_access_token(data={"sub": user["patient_id"]})
         
+        avatar_url = patient_profile.get("avatar") or "https://via.placeholder.com/150/4A90E2/FFFFFF?text=Patient"
+        
         logger.info(f"Patient logged in: {form_data.username}")
         
         return Token(
@@ -265,7 +359,7 @@ async def login_for_access_token(form_data: UserLogin):
             user_info={
                 "username": patient_profile.get("patient_id"),
                 "name": f"Patient {patient_profile.get('patient_id')[:8]}...",
-                "avatar": "https://via.placeholder.com/150/4A90E2/FFFFFF?text=Patient",
+                "avatar": avatar_url,
                 "age_range": patient_profile.get("age_range"),
                 "gender": patient_profile.get("gender")
             }
@@ -281,22 +375,20 @@ async def login_for_access_token(form_data: UserLogin):
     finally:
         agent.cleanup()
 
-
+# ---------------- API ENDPOINTS ---------------- #
 @app.post("/api/chat", response_model=ChatResponse, tags=["Chatbot"])
 async def chat_with_ai(request: ChatRequest):
-    """
-    Chat with LungScope AI Assistant
+    """Handles chat interactions with the AI assistant."""
+    global chatbot
     
-    Provides personalized medical insights based on:
-    - Patient medical history
-    - Audio classification results (if available)
-    - Medical knowledge base
-    """
+    if not chatbot:
+        raise HTTPException(
+            status_code=503, 
+            detail="Chatbot service not available. Please check backend logs."
+        )
+    
     try:
-        if not chatbot:
-            raise HTTPException(status_code=503, detail="Chatbot service not available")
-        
-        logger.info(f"Chat request from patient: {request.patient_id[:8]}***")
+        logger.info(f"Chat request from patient: {request.patient_id[:8]}...")
         
         response = chatbot.query(
             user_query=request.query,
@@ -305,47 +397,46 @@ async def chat_with_ai(request: ChatRequest):
         )
         
         return ChatResponse(**response)
-        
     except Exception as e:
-        logger.error(f"Error in chat endpoint: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Chat error: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Chat failed: {str(e)}"
+        )
 
-
-@app.post("/api/analyze-audio", response_model=AudioAnalysisResponse, tags=["Audio Analysis"])
+# ---------------- AUDIO ANALYSIS ---------------- #
+@app.post("/api/analyze-audio", tags=["Audio Analysis"])
 async def analyze_respiratory_audio(
-    file: UploadFile = File(..., description="Audio file (.wav, .mp3, .flac)"),
-    patient_id: str = Form(..., description="Patient identifier")
+    patient_id: str = Form(...), 
+    user_query: str = Form(""),
+    file: UploadFile = File(...)
 ):
-    """
-    Analyze respiratory audio using trained deep learning model
+    """Analyzes a respiratory audio file for disease classification."""
+    global audio_classifier
     
-    Returns disease classification with confidence score:
-    - Bronchiectasis
-    - Bronchiolitis
-    - COPD
-    - Healthy
-    - Pneumonia
-    - URTI
-    """
+    if not audio_classifier:
+        raise HTTPException(
+            status_code=503, 
+            detail="Audio classifier not available. Please check if the model file exists."
+        )
+    
+    allowed_extensions = ['.wav', '.mp3', '.flac']
+    file_ext = os.path.splitext(file.filename)[1].lower()
+    
+    if file_ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid audio file format. Allowed formats: {', '.join(allowed_extensions)}"
+        )
+
+    file_id = str(uuid.uuid4())
+    file_path = os.path.join("uploads/audio", f"{file_id}_{file.filename}")
+    
     try:
-        if not audio_classifier:
-            raise HTTPException(status_code=503, detail="Audio classifier not available")
-        
-        logger.info(f"Audio analysis request from patient: {patient_id[:8]}***")
-        
-        if not file.filename.endswith(('.wav', '.mp3', '.flac')):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid file format. Supported: .wav, .mp3, .flac"
-            )
-        
-        file_id = str(uuid.uuid4())
-        file_path = os.path.join("uploads/audio", f"{file_id}_{file.filename}")
-        
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
-        logger.info(f"Audio file saved: {file_path}")
+        logger.info(f"Analyzing audio file for patient: {patient_id[:8]}...")
         
         result = audio_classifier.predict(file_path)
         
@@ -364,7 +455,7 @@ async def analyze_respiratory_audio(
         logger.error(f"Error in audio analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
+# ---------------- COMBINED WORKFLOW ---------------- #
 @app.post("/api/full-analysis", tags=["Complete Analysis"])
 async def complete_respiratory_analysis(
     file: UploadFile = File(..., description="Respiratory audio file"),
@@ -405,53 +496,42 @@ async def complete_respiratory_analysis(
         )
         logger.info(f"Chat response generated")
         
-        return JSONResponse(content={
-            "status": "success",
-            "audio_analysis": {
-                "disease": audio_result["disease"],
-                "confidence": audio_result["confidence"],
-                "severity": audio_result["severity"]
-            },
-            "ai_response": {
-                "response": chat_response["response"],
-                "confidence": chat_response["confidence"],
-                "follow_up": chat_response["follow_up"]
-            },
+        return {
+            "classification_result": result,
             "timestamp": datetime.now().isoformat()
-        })
-        
-    except HTTPException:
-        raise
+        }
     except Exception as e:
-        logger.error(f"Error in full analysis: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Audio analysis error: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Audio analysis failed: {str(e)}"
+        )
+    finally:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except:
+                pass
 
-
+# ---------------- PATIENT DATA MANAGEMENT ---------------- #
 @app.get("/api/patient/{patient_id}", response_model=PatientDataResponse, tags=["Patient Data"])
 async def get_patient_data(patient_id: str):
-    """
-    Retrieve patient medical information from database
-    
-    Returns anonymized patient data:
-    - Demographics (age range, gender)
-    - Medical history
-    - Comorbidities
-    - Medications
-    """
+    """Retrieves medical information for a specific patient."""
+    agent = DataRetrievalAgent()
     try:
-        agent = DataRetrievalAgent()
         patient_data = agent.db_manager.get_patient_data(patient_id)
-        agent.cleanup()
-        
         if not patient_data:
-            raise HTTPException(status_code=404, detail="Patient not found")
+            raise HTTPException(
+                status_code=404, 
+                detail="Patient not found"
+            )
         
         comorbidities = []
-        if patient_data.get('has_hypertension'):
+        if patient_data.get('has_hypertension'): 
             comorbidities.append('Hypertension')
-        if patient_data.get('has_diabetes'):
+        if patient_data.get('has_diabetes'): 
             comorbidities.append('Diabetes')
-        if patient_data.get('has_asthma_history'):
+        if patient_data.get('has_asthma_history'): 
             comorbidities.append('Asthma History')
         
         return PatientDataResponse(
@@ -463,88 +543,146 @@ async def get_patient_data(patient_id: str):
             current_medications=patient_data.get('current_medications'),
             allergies=patient_data.get('allergies')
         )
-        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error retrieving patient data: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Get patient data error: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to retrieve patient data: {str(e)}"
+        )
+    finally:
+        agent.cleanup()
 
-
+# ---------------- PATIENT HISTORY ---------------- #
 @app.get("/api/patient/{patient_id}/history", tags=["Patient Data"])
 async def get_patient_history(patient_id: str, limit: int = 5):
-    """
-    Retrieve patient medical history
-    
-    Returns recent medical visits and diagnoses
-    """
+    """Retrieves recent medical history for a patient."""
+    agent = DataRetrievalAgent()
     try:
-        agent = DataRetrievalAgent()
         history = agent.db_manager.get_patient_history(patient_id, limit)
-        agent.cleanup()
-        
-        return JSONResponse(content={
-            "patient_id": patient_id,
-            "history_count": len(history),
+        return {
+            "patient_id": patient_id, 
+            "history_count": len(history), 
             "history": history
-        })
-        
+        }
     except Exception as e:
-        logger.error(f"Error retrieving patient history: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Get patient history error: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to retrieve history: {str(e)}"
+        )
+    finally:
+        agent.cleanup()
 
-
+# ---------------- MODEL INFO ---------------- #
 @app.get("/api/model/info", tags=["Model Information"])
 async def get_model_info():
-    """
-    Get information about the loaded audio classification model
-    """
+    """Gets information about the loaded audio classification model."""
+    global audio_classifier
+    
+    if not audio_classifier:
+        raise HTTPException(
+            status_code=503, 
+            detail="Model not loaded"
+        )
+    
     try:
-        if not audio_classifier:
-            raise HTTPException(status_code=503, detail="Model not loaded")
+        return JSONResponse(content=audio_classifier.get_model_info())
+    except Exception as e:
+        logger.error(f"Get model info error: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to get model info: {str(e)}"
+        )
+
+# ---------------- UPDATE PATIENT PROFILE ---------------- #
+@app.put("/api/patient/{username}/update", tags=["Patient Data"])
+async def update_patient_profile(
+    username: str,
+    age_range: Optional[str] = Form(None),
+    gender: Optional[str] = Form(None),
+    smoking_status: Optional[str] = Form(None),
+    has_hypertension: Optional[bool] = Form(None),
+    has_diabetes: Optional[bool] = Form(None),
+    has_asthma_history: Optional[bool] = Form(None),
+    previous_respiratory_infections: Optional[int] = Form(None),
+    current_medications: Optional[str] = Form(None),
+    allergies: Optional[str] = Form(None),
+    last_consultation_date: Optional[str] = Form(None),
+    avatar: Optional[UploadFile] = File(None)
+):
+    """Update patient profile information including avatar"""
+    agent = DataRetrievalAgent()
+    try:
+        patient = agent.db_manager.get_patient_data(username)
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+        update_data = {}
         
-        model_info = audio_classifier.get_model_info()
-        return JSONResponse(content=model_info)
-        
+        form_data = {
+            "age_range": age_range, "gender": gender, "smoking_status": smoking_status,
+            "has_hypertension": has_hypertension, "has_diabetes": has_diabetes,
+            "has_asthma_history": has_asthma_history, 
+            "previous_respiratory_infections": previous_respiratory_infections,
+            "current_medications": current_medications, "allergies": allergies,
+            "last_consultation_date": last_consultation_date
+        }
+
+        for key, value in form_data.items():
+            if value is not None:
+                update_data[key] = value
+
+        if avatar:
+            allowed_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+            file_ext = os.path.splitext(avatar.filename)[1].lower()
+            
+            if file_ext not in allowed_extensions:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid image format. Allowed: {', '.join(allowed_extensions)}"
+                )
+            
+            os.makedirs("uploads/avatars", exist_ok=True)
+            
+            old_avatar = patient.get('avatar')
+            if old_avatar and os.path.exists(old_avatar.lstrip('/')):
+                try:
+                    os.remove(old_avatar.lstrip('/'))
+                except Exception as e:
+                    logger.warning(f"Could not delete old avatar: {e}")
+            
+            avatar_filename = f"{username}_{uuid.uuid4()}{file_ext}"
+            avatar_path = os.path.join("uploads/avatars", avatar_filename)
+            
+            with open(avatar_path, "wb") as buffer:
+                shutil.copyfileobj(avatar.file, buffer)
+            
+            update_data["avatar"] = f"/uploads/avatars/{avatar_filename}"
+
+        if not update_data:
+             return JSONResponse(content={"message": "No fields to update"}, status_code=200)
+
+        success = agent.db_manager.update_patient(username, update_data)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update patient profile")
+
+        return JSONResponse(content={
+            "message": "Profile updated successfully",
+            "updated_fields": list(update_data.keys())
+        }, status_code=200)
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting model info: {e}")
+        logger.error(f"Profile update error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        agent.cleanup()
 
-
-@app.delete("/api/uploads/cleanup", tags=["Maintenance"])
-async def cleanup_old_uploads(days_old: int = 7):
-    """
-    Clean up old uploaded audio files
-    
-    Removes audio files older than specified days
-    """
-    try:
-        upload_dir = "uploads/audio"
-        deleted_count = 0
-        current_time = datetime.now().timestamp()
-        
-        for filename in os.listdir(upload_dir):
-            file_path = os.path.join(upload_dir, filename)
-            file_age_days = (current_time - os.path.getmtime(file_path)) / 86400
-            
-            if file_age_days > days_old:
-                os.remove(file_path)
-                deleted_count += 1
-        
-        logger.info(f"Cleaned up {deleted_count} old files")
-        
-        return JSONResponse(content={
-            "status": "success",
-            "deleted_files": deleted_count,
-            "days_threshold": days_old
-        })
-        
-    except Exception as e:
-        logger.error(f"Error cleaning up uploads: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+# ---------------- STATIC FILES ---------------- #
+os.makedirs("uploads/avatars", exist_ok=True)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # ---------------- ERROR HANDLERS ---------------- #
 @app.exception_handler(404)
@@ -558,13 +696,13 @@ async def not_found_handler(request, exc):
         }
     )
 
-
 # ---------------- MAIN EXECUTION BLOCK ---------------- #
 if __name__ == "__main__":
     import uvicorn
     
-    logger.info("Starting LungScope AI Backend Server...")
+    logger.info("Starting A.I.R.A Backend Server...")
     logger.info("API Documentation available at: http://localhost:8000/docs")
+    
     
     uvicorn.run(
         "main:app",

@@ -1,6 +1,67 @@
+:root {
+    /** Base colors */
+    --clr-dark-a0: #000000;
+    --clr-light-a0: #ffffff;
+    
+    /** Theme primary colors */
+    --clr-primary-a0: #a76329;
+    --clr-primary-a10: #b37340;
+    --clr-primary-a20: #be8456;
+    --clr-primary-a30: #c9956d;
+    --clr-primary-a40: #d3a684;
+    --clr-primary-a50: #ddb79c;
+    
+    /** Theme surface colors */
+    --clr-surface-a0: #121212;
+    --clr-surface-a10: #282828;
+    --clr-surface-a20: #3f3f3f;
+    --clr-surface-a30: #575757;
+    --clr-surface-a40: #717171;
+    --clr-surface-a50: #8b8b8b;
+    
+    /** Theme tonal surface colors */
+    --clr-surface-tonal-a0: #201a15;
+    --clr-surface-tonal-a10: #352f2a;
+    --clr-surface-tonal-a20: #4b4541;
+    --clr-surface-tonal-a30: #625d59;
+    --clr-surface-tonal-a40: #7a7672;
+    --clr-surface-tonal-a50: #93908d;
+    
+    /** Success colors */
+    --clr-success-a0: #22946e;
+    --clr-success-a10: #47d5a6;
+    --clr-success-a20: #9ae8ce;
+    
+    /** Warning colors */
+    --clr-warning-a0: #a87a2a;
+    --clr-warning-a10: #d7ac61;
+    --clr-warning-a20: #ecd7b2;
+    
+    /** Danger colors */
+    --clr-danger-a0: #9c2121;
+    --clr-danger-a10: #d94a4a;
+    --clr-danger-a20: #eb9e9e;
+    
+    /** Info colors */
+    --clr-info-a0: #21498a;
+    --clr-info-a10: #4077d1;
+    --clr-info-a20: #92b2e5;
+}
+
 body {
     margin: 0;
-    font-family: 'Inter', sans-serif;
-    background-color: #131314;
-    color: #e3e3e3;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background-color: var(--clr-surface-a0);
+    color: var(--clr-light-a0);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+.bg-primary {
+    color: var(--clr-primary-a50);
+    background-color: var(--clr-surface-a0);
 }

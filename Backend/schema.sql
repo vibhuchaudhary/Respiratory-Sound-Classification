@@ -1,4 +1,4 @@
-CREATE TABLE patients (
+CREATE TABLE IF NOT EXISTS patients (
     patient_id VARCHAR(255) PRIMARY KEY,
     age_range VARCHAR(20),
     gender VARCHAR(20),
@@ -10,13 +10,15 @@ CREATE TABLE patients (
     current_medications TEXT,
     allergies TEXT,
     last_consultation_date TIMESTAMP,
+    avatar TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE medical_history (
+-- Patient medical history
+CREATE TABLE IF NOT EXISTS medical_history (
     history_id SERIAL PRIMARY KEY,
-    patient_id VARCHAR(255) REFERENCES patients(patient_id),
+    patient_id VARCHAR(255) REFERENCES patients(patient_id) ON DELETE CASCADE,
     visit_date TIMESTAMP,
     diagnosis TEXT,
     symptoms TEXT,
@@ -25,7 +27,8 @@ CREATE TABLE medical_history (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE audit_log (
+-- Audit trail for compliance
+CREATE TABLE IF NOT EXISTS audit_log (
     log_id SERIAL PRIMARY KEY,
     patient_id VARCHAR(255),
     query_timestamp TIMESTAMP,
@@ -35,7 +38,8 @@ CREATE TABLE audit_log (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_patient_id ON medical_history(patient_id);
-CREATE INDEX idx_visit_date ON medical_history(visit_date);
-CREATE INDEX idx_audit_patient ON audit_log(patient_id);
-CREATE INDEX idx_audit_timestamp ON audit_log(query_timestamp);
+-- Performance indexes
+CREATE INDEX IF NOT EXISTS idx_patient_history ON medical_history(patient_id);
+CREATE INDEX IF NOT EXISTS idx_visit_date ON medical_history(visit_date);
+CREATE INDEX IF NOT EXISTS idx_audit_patient ON audit_log(patient_id);
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(query_timestamp);

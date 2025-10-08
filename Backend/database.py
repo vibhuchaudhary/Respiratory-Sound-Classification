@@ -36,6 +36,7 @@ class DatabaseManager:
     
     def __init__(self):
         """Initialize and validate database connection parameters from .env"""
+        
         self.db_user = os.getenv('POSTGRES_USER')
         self.db_password = os.getenv('POSTGRES_PASSWORD')
         self.db_name = os.getenv('POSTGRES_DB')
@@ -59,6 +60,7 @@ class DatabaseManager:
         }
         self.conn = None
         logger.info("DatabaseManager initialized")
+
 
     def connect(self):
         """Establish database connection"""
@@ -103,7 +105,8 @@ class DatabaseManager:
                 previous_respiratory_infections,
                 current_medications,
                 allergies,
-                last_consultation_date
+                last_consultation_date,
+                avatar
             FROM patients
             WHERE patient_id = %s
             """
@@ -213,7 +216,9 @@ class DatabaseManager:
                 self.connect()
             
             cursor = self.conn.cursor(cursor_factory=RealDictCursor)
+            
             query = "SELECT patient_id FROM patients WHERE patient_id = %s"
+            
             cursor.execute(query, (patient_id,))
             result = cursor.fetchone()
             cursor.close()
@@ -260,9 +265,9 @@ class DatabaseManager:
                 patient_id, age_range, gender, smoking_status, 
                 has_hypertension, has_diabetes, has_asthma_history, 
                 previous_respiratory_infections, current_medications, allergies,
-                last_consultation_date
+                last_consultation_date, avatar
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             """
             
@@ -277,14 +282,15 @@ class DatabaseManager:
                 patient_data.get('previous_respiratory_infections', 0),
                 patient_data.get('current_medications', ''),
                 patient_data.get('allergies', ''),
-                last_consultation
+                last_consultation,
+                patient_data.get('avatar', None)
             )
             
             cursor.execute(query, data_tuple)
             self.conn.commit()
             cursor.close()
             
-            logger.info(f"Successfully registered new patient: {patient_data['patient_id']}")
+            logger.info(f"Successfully registered new patient: {patient_data['patient_id']} with avatar: {patient_data.get('avatar')}")
             return True
             
         except psycopg2.IntegrityError as e:
@@ -293,6 +299,71 @@ class DatabaseManager:
             return False
         except Exception as e:
             logger.error(f"Error creating patient: {e}")
+            self.conn.rollback()
+            return False
+    
+    def update_patient(self, patient_id: str, update_data: Dict[str, Any]) -> bool:
+        """
+        Updates an existing patient record in the database.
+        
+        Args:
+            patient_id: The patient's unique identifier
+            update_data: Dictionary containing fields to update
+            
+        Returns:
+            True if update is successful, False otherwise.
+        """
+        try:
+            if not self.conn:
+                self.connect()
+            
+            cursor = self.conn.cursor()
+            
+            # Build dynamic UPDATE query based on provided fields
+            set_clauses = []
+            values = []
+            
+            allowed_fields = [
+                'age_range', 'gender', 'smoking_status', 'has_hypertension',
+                'has_diabetes', 'has_asthma_history', 'previous_respiratory_infections',
+                'current_medications', 'allergies', 'last_consultation_date', 'avatar'
+            ]
+            
+            for field in allowed_fields:
+                if field in update_data:
+                    set_clauses.append(f"{field} = %s")
+                    values.append(update_data[field])
+            
+            if not set_clauses:
+                logger.warning("No valid fields provided for update")
+                return False
+            
+            # Always update the updated_at timestamp
+            set_clauses.append("updated_at = %s")
+            values.append(datetime.now())
+            
+            values.append(patient_id)
+            
+            query = f"""
+            UPDATE patients 
+            SET {', '.join(set_clauses)}
+            WHERE patient_id = %s
+            """
+            
+            cursor.execute(query, values)
+            self.conn.commit()
+            rows_affected = cursor.rowcount
+            cursor.close()
+            
+            if rows_affected > 0:
+                logger.info(f"Successfully updated patient: {patient_id} - Updated fields: {list(update_data.keys())}")
+                return True
+            else:
+                logger.warning(f"No patient found with ID: {patient_id}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error updating patient: {e}")
             self.conn.rollback()
             return False
 
