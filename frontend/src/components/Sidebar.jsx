@@ -9,17 +9,41 @@ import {
     FiEdit2
 } from 'react-icons/fi';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+
 const Sidebar = ({ user, onLogout }) => {
     if (!user) {
         return null; 
     }
 
+    // Construct full avatar URL if it's a relative path
+    const getAvatarUrl = () => {
+        if (!user.avatar) {
+            return "https://via.placeholder.com/150/4A90E2/FFFFFF?text=Patient";
+        }
+        
+        // If avatar starts with http, it's already a full URL
+        if (user.avatar.startsWith('http')) {
+            return user.avatar;
+        }
+        
+        // Otherwise, prepend the API base URL
+        return `${API_BASE_URL}${user.avatar}`;
+    };
+
     return (
         <div className="sidebar-container">
             <div className="profile-section">
-                <img src={user.avatar} alt="Profile" className="profile-picture" />
-                <h3 className="profile-name">{user.name}</h3>
-                <span className="profile-username">@{user.username}</span>
+                <img 
+                    src={getAvatarUrl()} 
+                    alt="Profile" 
+                    className="profile-picture"
+                    onError={(e) => {
+                        // Fallback to placeholder if image fails to load
+                        e.target.src = "https://via.placeholder.com/150/4A90E2/FFFFFF?text=Patient";
+                    }}
+                />
+                <h4 className="profile-username">@{user.username}</h4>
             </div>
             
             <nav className="navigation-menu">
@@ -36,10 +60,6 @@ const Sidebar = ({ user, onLogout }) => {
                     <span>Edit Profile</span>
                 </NavLink>
             </nav>
-
-            <div className="upload-section">
-                <button className="upload-button"><FiUpload /></button>
-            </div>
 
             <div className="sidebar-footer">
                 <button className="logout-button" onClick={onLogout}>

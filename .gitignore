@@ -1,10 +1,53 @@
+# Environment files
 .env
-.frontend/package-lock.json
-.frontend/package.json
-.frontend/node_modules
-.frontend/dist
-__pycache__
+backend/.env
+backend/.venv
+venv/
+env/
+
+# Node / Frontend
+frontend/package-lock.json
+frontend/package.json
+frontend/node_modules/
+frontend/dist/
+node_modules/
+
+# Python cache & compiled files
+*__pycache__/
+/__pycache__
+__pycache__/
 *.pyc
-instance
-node_modules
-__pycache__/database.cpython-312.pyc
+*.pyo
+*.py[oc]
+backend/__pycache__/
+backend/.pytest_cache/
+
+# Backend build / distribution
+backend/build/
+backend/dist/
+backend/wheels/
+backend/*.egg-info
+
+# Backend logs & uploads
+backend/logs/
+backend/uploads/
+
+# Vector database
+backend/vector_db/
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Database files
+*.sqlite3
+*.db
+frontend/package-lock.json
+frontend/package.json
