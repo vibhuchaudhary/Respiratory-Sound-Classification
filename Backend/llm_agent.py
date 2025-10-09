@@ -57,7 +57,7 @@ class LungScopeChatbot:
             openai_api_key=self.openai_api_key,
             model_name=model_name,
             temperature=temperature,
-            max_tokens=1000
+            max_tokens=300
         )
         
         # Initialize data retrieval agent
@@ -67,8 +67,10 @@ class LungScopeChatbot:
         self.memory = ConversationBufferMemory(
             memory_key="chat_history",
             return_messages=True,
-            output_key="answer"
+            input_key="input",
+            output_key="output"
         )
+        self.conversation_turns = {}      # Track turns per patient
         
         # Build system prompt
         self.system_prompt = self._build_system_prompt()
@@ -80,144 +82,55 @@ class LungScopeChatbot:
         logger.info(f"LungScopeChatbot initialized with model: {model_name}")
     
     def _build_system_prompt(self) -> str:
-        """
-        Construct intelligent medical consultation prompt with history awareness
-        
-        Returns:
-            System prompt string
-        """
-        prompt = """You are Dr. LungScope, an AI-powered respiratory specialist who conducts thorough, intelligent medical consultations.
+        """Construct concise medical consultation prompt"""
+        return """You are Dr. LungScope, an AI respiratory health assistant.
 
-        YOUR CONSULTATION APPROACH:
-        You conduct consultations like a real doctor by:
-        1. ALWAYS checking patient's medical history FIRST before asking questions
-        2. Using medical history to guide your questioning strategy
-        3. Only requesting audio recordings when medically necessary
-        4. Integrating past diagnoses with current symptoms
-        5. Asking targeted questions to confirm or rule out conditions
+    **CRITICAL RULES:**
+    1. **ALWAYS start first response by acknowledging patient's medical history** (if any)
+    Example: "I see you have hypertension and are a former smoker. Let's discuss your symptoms."
 
-        CRITICAL: MEDICAL HISTORY AWARENESS
+    2. **If patient has pre-existing respiratory condition (COPD, Asthma, Chronic Bronchitis):**
+    - Do NOT request audio recording
+    - Provide diagnosis/advice based on known condition + current symptoms
+    - Example: "Given your history of COPD, your current symptoms align with an exacerbation..."
 
-        IF PATIENT HAS EXISTING RESPIRATORY CONDITION (from database):
-        - Acknowledge their known condition immediately
-        - Example: "I see from your medical history that you have Asthma. Are you still experiencing symptoms related to this?"
-        - Example: "Your records show a previous COPD diagnosis. Has your condition changed recently?"
-        - Ask about CURRENT symptoms vs baseline
-        - Focus on: worsening, improvement, or new symptoms
-        - DO NOT ask for audio recording unless symptoms suggest NEW complications
+    3. **If NO known respiratory condition:**
+    - Ask symptom questions (1-2 turns)
+    - Request audio recording (turn 3+)
+    - Analyze audio and provide diagnosis
 
-        IF NO RESPIRATORY HISTORY (or unknown condition):
-        - Ask exploratory questions about symptoms
-        - Request audio recording to aid diagnosis
-        - Use standard diagnostic approach
+    **CONSULTATION FLOW:**
 
-        AUDIO RECORDING DECISION LOGIC:
+    **Turn 1 - Initial Response:**
+    - Acknowledge medical history FIRST: "I see from your profile that you have [condition] and [risk factors]..."
+    - Then ask about current symptoms
 
-        REQUEST AUDIO RECORDING when:
-        ✅ Patient has NEW symptoms not explained by medical history
-        ✅ No clear diagnosis in medical history
-        ✅ Symptoms suggest possible complication (e.g., asthma patient with new crackling sounds)
-        ✅ Patient reports worsening despite treatment
-        ✅ Differential diagnosis needed between similar conditions
+    **Turn 2-3 - Follow-up:**
+    - If known respiratory disease exists → provide advice/diagnosis without audio
+    - If NO known respiratory disease → ask for audio recording
 
-        DO NOT request audio recording when:
-        ❌ Patient has known condition and symptoms match their baseline
-        ❌ Symptoms clearly explained by documented history
-        ❌ Patient asking general questions about their known condition
-        ❌ Follow-up on previously diagnosed stable condition
+    **Turn 4+ - After Audio:**
+    - Reference medical history in diagnosis
+    - Format: "Your audio shows [DISEASE] with [XX]% confidence. Given your [medical history], I recommend [action]."
 
-        CONVERSATION STAGES:
+    **RESPONSE RULES:**
+    - Keep responses 2-4 sentences maximum
+    - Check conversation history - don't repeat yourself
+    - Reference known conditions when relevant
 
-        STAGE 1 - MEDICAL HISTORY REVIEW:
-        - ALWAYS start by acknowledging what you know from their records
-        - If they have respiratory history: "I see you have [condition]. Let's discuss your current symptoms."
-        - If no history: "I don't see any respiratory conditions in your history. Tell me about your concerns."
+    **AUDIO REQUEST FORMAT:**
+    "To accurately assess your condition, please record your lung sounds using the audio recording feature below."
 
-        STAGE 2 - SYMPTOM ASSESSMENT:
-        - Ask 1-2 focused questions based on:
-        * Their known conditions (if any)
-        * Current complaint
-        * Comorbidities from database
-        - Example with history: "Since you have asthma, is this breathlessness similar to your usual symptoms or different?"
-        - Example without history: "When did you first notice these symptoms?"
+    **DETECTABLE CONDITIONS (from audio):**
+    Bronchiectasis, Bronchiolitis, COPD, Pneumonia, URTI, Healthy lungs
 
-        STAGE 3 - AUDIO REQUEST (CONDITIONAL):
-        - Use decision logic above
-        - If requesting: "To better understand your lung sounds, please place your stethoscope on [specific location]"
-        - If NOT requesting: Continue with symptom-based assessment
+    **PRE-EXISTING CONDITIONS THAT SKIP AUDIO:**
+    COPD, Asthma, Chronic Bronchitis, Bronchiectasis (if already diagnosed)
 
-        STAGE 4 - AUDIO ANALYSIS INTEGRATION (if applicable):
-        - Compare audio findings with:
-        * Their known condition
-        * Current symptoms
-        * Historical patterns
-        - Example: "The audio shows wheezes consistent with your known asthma. However, I also detected crackles, which could indicate a secondary infection."
+    Remember: Medical history FIRST, then symptoms or audio analysis!"""
 
-        STAGE 5 - DIAGNOSIS/ASSESSMENT:
-        WITH MEDICAL HISTORY:
-        - Relate findings to known condition
-        - Example: "Your symptoms and audio analysis are consistent with an asthma exacerbation."
-        - Identify complications: "The crackles suggest possible bronchitis on top of your COPD."
-
-        WITHOUT MEDICAL HISTORY:
-        - Provide preliminary diagnosis based on audio + symptoms
-        - Example: "Based on the detected wheezes and your symptoms, this suggests possible asthma."
-
-        STAGE 6 - RECOMMENDATIONS:
-        - Tailor to their specific situation:
-        * With history: "Since you have known COPD, I recommend..."
-        * New diagnosis: "I suggest consulting a pulmonologist for..."
-        - Medication adjustments for existing conditions
-        - Lifestyle modifications
-        - When to seek emergency care
-
-        MODEL LIMITATIONS YOU MUST ACKNOWLEDGE:
-
-        The audio classifier can detect:
-        - Bronchiectasis, Bronchiolitis, COPD, Pneumonia, URTI, Healthy lungs
-
-        The model CANNOT detect:
-        - Asthma (no wheezing in dataset)
-        - Tuberculosis
-        - Lung cancer
-        - Pulmonary embolism
-
-        IMPORTANT SCENARIOS:
-
-        Scenario A - Patient with Asthma History:
-        Patient: "I'm having trouble breathing"
-        You: "I see from your medical history that you have Asthma. Is this breathlessness similar to your usual symptoms, or does it feel different?"
-        → If similar: Provide asthma management advice, NO audio needed
-        → If different: Ask clarifying questions, THEN request audio to check for complications
-
-        Scenario B - Unknown Respiratory Issue:
-        Patient: "I have chest tightness"
-        You: "I don't see any respiratory conditions in your history. Can you tell me when this started and if you've noticed any coughing or wheezing?"
-        → After 2-3 questions: Request audio recording for diagnostic help
-
-        Scenario C - Known COPD with New Symptoms:
-        Patient: "My cough is worse than usual"
-        You: "Your records show you have COPD. This worsening cough concerns me - are you also experiencing fever or producing colored mucus?"
-        → Symptoms suggest infection: Request audio to check for pneumonia
-
-        CRITICAL RULES:
-        - NEVER ignore medical history from database
-        - NEVER ask for audio if diagnosis is already clear from history + symptoms
-        - ALWAYS acknowledge existing conditions first
-        - Ask ONE question at a time (max 2)
-        - Keep responses conversational (3-5 sentences)
-        - Show empathy: "I understand that must be concerning"
-        - Track what information you already have from database vs patient
-
-        RESPONSE TONE:
-        - Conversational and warm
-        - Acknowledge past medical context
-        - Concise and focused
-        - Interactive (end with question or next step)
-
-        Remember: You have access to patient's medical history - USE IT WISELY to provide intelligent, context-aware care. Don't waste time asking for recordings when you already have diagnostic clarity from their records.
-        """
         return prompt
+
 
     
     def _build_qa_chain(self):
@@ -339,7 +252,7 @@ Severity Level: {audio_result.get('severity', 'Not specified')}
         audio_result: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Process user query with full RAG pipeline
+        Process user query with full RAG pipeline and conversation memory
         
         Args:
             user_query: User's question or concern
@@ -350,7 +263,13 @@ Severity Level: {audio_result.get('severity', 'Not specified')}
             Structured response with answer, confidence, and follow-up
         """
         try:
-            logger.info(f"Processing query for patient: {patient_id[:6]}***")
+            # Track conversation turns per patient
+            if patient_id not in self.conversation_turns:
+                self.conversation_turns[patient_id] = 0
+            self.conversation_turns[patient_id] += 1
+            turn_count = self.conversation_turns[patient_id]
+            
+            logger.info(f"Processing query for patient: {patient_id[:6]}*** (Turn {turn_count})")
             
             # Step 1: Retrieve full context
             disease_classification = audio_result.get('disease', 'Unknown') if audio_result else 'Unknown'
@@ -362,21 +281,26 @@ Severity Level: {audio_result.get('severity', 'Not specified')}
                 audio_result=audio_result
             )
             
+            # Add turn count to context
+            full_context['turn_count'] = turn_count
+            full_context['has_audio'] = audio_result is not None
+            
             # Step 2: Format context for prompt
             patient_context_str = self._format_patient_context(full_context)
-            audio_analysis_str = self._format_audio_analysis(audio_result) if audio_result else "No audio analysis provided"
+            audio_analysis_str = self._format_audio_analysis(audio_result) if audio_result else "No audio analysis provided yet"
             
-            # Step 3: Query LLM with conversational chain
-            # Note: For custom context injection, we'll use a direct call instead of the chain
+            # Step 3: Query LLM with context AND conversation history
             response = self._query_with_context(
                 question=user_query,
                 patient_context=patient_context_str,
                 audio_analysis=audio_analysis_str,
-                disease_knowledge=full_context.get('disease_knowledge', [])
+                disease_knowledge=full_context.get('disease_knowledge', []),
+                turn_count=turn_count,
+                has_audio=audio_result is not None
             )
             
             # Step 4: Generate follow-up suggestions
-            follow_up = self._generate_follow_up(disease_classification, audio_result)
+            follow_up = self._generate_follow_up(disease_classification, audio_result, turn_count)
             
             # Step 5: Calculate confidence
             confidence = self._calculate_response_confidence(audio_result, full_context)
@@ -387,6 +311,8 @@ Severity Level: {audio_result.get('severity', 'Not specified')}
                 "confidence": float(confidence),
                 "disease_classification": disease_classification,
                 "follow_up": follow_up,
+                "turn_count": turn_count,
+                "should_request_audio": turn_count >= 3 and not audio_result,
                 "timestamp": datetime.now().isoformat(),
             }
             
@@ -398,7 +324,7 @@ Severity Level: {audio_result.get('severity', 'Not specified')}
                 audio_result=audio_result
             )
             
-            logger.info(f"Query processed successfully for patient: {patient_id[:6]}***")
+            logger.info(f"Query processed successfully for patient: {patient_id[:6]}*** (Turn {turn_count})")
             return structured_response
             
         except Exception as e:
@@ -410,68 +336,119 @@ Severity Level: {audio_result.get('severity', 'Not specified')}
                 "confidence": 0.0,
                 "disease_classification": None,
                 "follow_up": "Please retry your query or contact support.",
+                "turn_count": 0,
+                "should_request_audio": False,
                 "timestamp": datetime.now().isoformat()
             }
+
     
     def _query_with_context(
         self,
         question: str,
         patient_context: str,
         audio_analysis: str,
-        disease_knowledge: List[Dict]
+        disease_knowledge: List[Dict],
+        turn_count: int,
+        has_audio: bool
     ) -> str:
-        """
-        Query LLM with injected context
+        """Query LLM with injected context AND conversation history"""
         
-        Args:
-            question: User query
-            patient_context: Formatted patient information
-            audio_analysis: Formatted audio result
-            disease_knowledge: Retrieved documents from vector DB
+        # Get conversation history from memory
+        chat_history = self.memory.load_memory_variables({})
+        history_str = ""
+        
+        if chat_history.get("chat_history"):
+            history_str = "\n\n**PREVIOUS CONVERSATION:**\n"
+            for msg in chat_history["chat_history"]:
+                # Check message type properly
+                if hasattr(msg, 'type'):
+                    role = "Patient" if msg.type == "human" else "Dr. LungScope"
+                else:
+                    role = "Dr. LungScope"
+                
+                content = msg.content if hasattr(msg, 'content') else str(msg)
+                history_str += f"{role}: {content}\n"
             
-        Returns:
-            LLM response text
-        """
-        # Format disease knowledge documents
-        knowledge_context = "\n\n".join([
-            f"Source {idx + 1} ({doc.get('source', 'Unknown')}):\n{doc.get('content', '')}"
-            for idx, doc in enumerate(disease_knowledge[:5])
-        ])
+            history_str += "\n**CRITICAL:** Review the above conversation. DO NOT repeat medical history or ask the same questions again!\n"
         
-        # Build full prompt
+        # Format knowledge context (limit to top 3 sources)
+        knowledge_context = ""
+        if disease_knowledge:
+            knowledge_context = "\n".join([
+                f"Medical Source {idx + 1}: {doc.get('content', '')[:150]}..."
+                for idx, doc in enumerate(disease_knowledge[:3])
+            ])
+        else:
+            knowledge_context = "No specific disease knowledge retrieved."
+        
+        # Audio request logic
+        audio_prompt = ""
+        if turn_count >= 3 and not has_audio:
+            audio_prompt = '\n**ACTION REQUIRED:** We\'ve discussed symptoms for 3+ turns. Now say: "To provide accurate diagnosis, please record your lung sounds using the audio recording button below."\n'
+        
+        # Build full prompt WITH HISTORY
         full_prompt = f"""{self.system_prompt}
 
-Context from medical knowledge base:
-{knowledge_context}
+    **CONTEXT FOR THIS CONSULTATION:**
+    Turn Number: {turn_count}/10
+    Audio Provided: {"Yes - Analyze and provide diagnosis" if has_audio else "No - Ask for recording if turn >= 3"}
 
-{patient_context}
+    Medical Knowledge Available:
+    {knowledge_context}
 
-{audio_analysis}
+    {patient_context}
 
-Patient Question: {question}
+    {audio_analysis}
+    {audio_prompt}
+    {history_str}
 
-Provide a helpful, medically-informed response considering all available context.
-"""
+    **CURRENT PATIENT QUESTION:** {question}
+
+    **YOUR RESPONSE (2-4 sentences ONLY, acknowledge history):**
+    """
         
-        # Query LLM
-        response = self.llm.invoke(full_prompt).content
-        return response.strip()
+        # Invoke LLM
+        response = self.llm.invoke(full_prompt)
+        response_text = response.content.strip()
+        
+        # CRITICAL: Save to memory with correct keys
+        self.memory.save_context(
+            {"input": question},
+            {"output": response_text}
+        )
+        
+        return response_text
+
+
     
-    def _generate_follow_up(self, disease: str, audio_result: Optional[Dict]) -> str:
-        """Generate contextual follow-up suggestions"""
-        if not audio_result or audio_result.get('confidence', 0) < 0.75:
-            return "Would you like me to help you find nearby pulmonologists for an in-person evaluation?"
+    def _generate_follow_up(
+        self,
+        disease: str,
+        audio_result: Optional[Dict],
+        turn_count: int
+    ) -> str:
+        """Generate contextual follow-up based on conversation progress"""
         
-        disease_follow_ups = {
-            "COPD": "Would you like information about pulmonary rehabilitation programs or breathing exercises?",
-            "Pneumonia": "Would you like me to explain warning signs that require immediate medical attention?",
-            "Bronchiectasis": "Would you like information about airway clearance techniques?",
-            "Bronchiolitis": "Would you like guidance on supportive care measures?",
-            "URTI": "Would you like tips on managing symptoms at home?",
-            "Healthy": "Would you like recommendations for maintaining respiratory health?"
-        }
+        # If audio provided, give diagnosis-based follow-up
+        if audio_result:
+            confidence = audio_result.get('confidence', 0.0)
+            if confidence > 0.8:
+                return "Schedule follow-up with pulmonologist if symptoms worsen."
+            else:
+                return "Audio analysis inconclusive. Recommend in-person examination."
         
-        return disease_follow_ups.get(disease, "Would you like more information about your condition?")
+        # If no audio and turn >= 3, request audio
+        if turn_count >= 3:
+            return "Please record lung sounds using the audio recording feature for accurate diagnosis."
+        
+        # Early turns: gather more info
+        if turn_count == 1:
+            return "Please provide more details about your symptoms."
+        elif turn_count == 2:
+            return "Any other symptoms or changes you've noticed recently?"
+        else:
+            return "Continue describing symptoms for better assessment."
+
     
     def _calculate_response_confidence(
         self,

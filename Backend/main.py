@@ -24,6 +24,9 @@ from jose import jwt
 from llm_agent import LungScopeChatbot
 from database import DataRetrievalAgent
 from audio_classifier import RespiratoryAudioClassifier
+import sys
+import io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # ---------------- JWT CONFIG ---------------- #
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
@@ -68,7 +71,7 @@ async def lifespan(app: FastAPI):
 
 
     try:
-        chatbot = LungScopeChatbot(temperature=0.3, model_name="gpt-4")
+        chatbot = LungScopeChatbot(model_name="gpt-4")  # Temperature is set inside __init__
         logger.info("✓ LLM Chatbot initialized")
     except Exception as e:
         logger.error(f"✗ Failed to initialize chatbot: {e}")
@@ -186,6 +189,8 @@ class ChatResponse(BaseModel):
     confidence: Optional[float] = None
     disease_classification: Optional[str] = None
     follow_up: Optional[str] = None
+    turn_count: Optional[int] = None  
+    should_request_audio: Optional[bool] = None  
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 class AudioAnalysisResponse(BaseModel):
@@ -471,47 +476,69 @@ async def complete_respiratory_analysis(
     
     This is the main endpoint for frontend integration
     """
+    file_path = None
     try:
         if not audio_classifier or not chatbot:
             raise HTTPException(status_code=503, detail="Services not fully initialized")
         
         logger.info(f"Full analysis request from patient: {patient_id[:8]}***")
         
+        # Validate audio format
         if not file.filename.endswith(('.wav', '.mp3', '.flac')):
-            raise HTTPException(status_code=400, detail="Invalid audio format")
+            raise HTTPException(status_code=400, detail="Invalid audio format. Supported: .wav, .mp3, .flac")
         
+        # Save uploaded audio file
         file_id = str(uuid.uuid4())
         file_path = os.path.join("uploads/audio", f"{file_id}_{file.filename}")
         
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
+        # Step 1: Classify audio
+        logger.info("Classifying audio...")
         audio_result = audio_classifier.predict(file_path)
-        logger.info(f"Audio classified: {audio_result['disease']}")
+        logger.info(f"Audio classified as: {audio_result['disease']} (confidence: {audio_result['confidence']:.2f})")
         
+        # Step 2: Generate AI response with audio context
+        logger.info("Generating AI response with RAG pipeline...")
         chat_response = chatbot.query(
             user_query=query,
             patient_id=patient_id,
             audio_result=audio_result
         )
-        logger.info(f"Chat response generated")
+        logger.info("Chat response generated successfully")
         
+        # Step 3: Return combined results
         return {
-            "classification_result": result,
+            "audio_analysis": {
+                "disease": audio_result["disease"],
+                "confidence": audio_result["confidence"],
+                "severity": audio_result.get("severity", "N/A"),
+                "probabilities": audio_result.get("probabilities", {})
+            },
+            "ai_response": chat_response,  # FIXED: was "classification_result" and undefined "result"
             "timestamp": datetime.now().isoformat()
         }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Audio analysis error: {e}")
+        logger.error(f"Full analysis error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500, 
             detail=f"Audio analysis failed: {str(e)}"
         )
     finally:
-        if os.path.exists(file_path):
+        # Clean up uploaded file
+        if file_path and os.path.exists(file_path):
             try:
                 os.remove(file_path)
-            except:
-                pass
+                logger.info(f"Cleaned up audio file: {file_path}")
+            except Exception as e:
+                logger.warning(f"Failed to delete audio file: {e}")
+
 
 # ---------------- PATIENT DATA MANAGEMENT ---------------- #
 @app.get("/api/patient/{patient_id}", response_model=PatientDataResponse, tags=["Patient Data"])
