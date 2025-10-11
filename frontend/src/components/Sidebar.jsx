@@ -8,7 +8,7 @@ import {
     FiEdit2
 } from 'react-icons/fi';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, '');
 
 const Sidebar = ({ user, onLogout }) => {
     if (!user) {
@@ -18,7 +18,8 @@ const Sidebar = ({ user, onLogout }) => {
     // Construct full avatar URL
     const getAvatarUrl = () => {
         if (!user.avatar) {
-            return "https://via.placeholder.com/150/4A90E2/FFFFFF?text=Patient";
+            return "https://ui-avatars.com/api/?name=Patient&size=150&background=4A90E2&color=ffffff"
+;
         }
         
         // If avatar starts with http, it's already a full URL (Google OAuth)
@@ -27,9 +28,11 @@ const Sidebar = ({ user, onLogout }) => {
         }
         
         // Otherwise, prepend the API base URL (local uploads)
-        return `${API_BASE_URL}${user.avatar}`;
+        const cleanPath = user.avatar.startsWith('/') ? user.avatar : `/${user.avatar}`;
+        return `${API_BASE_URL}${cleanPath}`;
     };
 
+    
     return (
         <div className="sidebar-container">
             <div className="profile-section">
@@ -38,7 +41,7 @@ const Sidebar = ({ user, onLogout }) => {
                     alt="Profile" 
                     className="profile-picture"
                     onError={(e) => {
-                        e.target.src = "https://via.placeholder.com/150/4A90E2/FFFFFF?text=Patient";
+                        e.target.src = "https://ui-avatars.com/api/?name=Patient&size=150&background=4A90E2&color=ffffff";
                     }}
                 />
                 <h4 className="profile-username">@{user.username}</h4>

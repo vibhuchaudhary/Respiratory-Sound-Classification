@@ -3,7 +3,7 @@ import axios from "axios";
 import { toast } from "react-hot-toast";
 import "../css/EditProfile.css";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, '');
 const GENDER_OPTIONS = ["Male", "Female", "Other", "Prefer not to say"];
 const SMOKING_STATUS_OPTIONS = ["Never", "Former", "Current"];
 
@@ -88,6 +88,13 @@ export default function EditProfile({ user, onUserUpdate }) {
         setAvatarPreview(reader.result);
       };
       reader.readAsDataURL(file);
+    }
+
+    if (res.data.avatar) {
+        const avatarUrl = res.data.avatar.startsWith('http') 
+            ? res.data.avatar 
+            : `${API_BASE_URL}${res.data.avatar.startsWith('/') ? res.data.avatar : '/' + res.data.avatar}`;
+        setAvatarPreview(avatarUrl);
     }
   };
 
