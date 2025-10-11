@@ -5,7 +5,6 @@ import {
     FiMessageSquare, 
     FiUser, 
     FiLogOut, 
-    FiUpload,
     FiEdit2
 } from 'react-icons/fi';
 
@@ -16,18 +15,18 @@ const Sidebar = ({ user, onLogout }) => {
         return null; 
     }
 
-    // Construct full avatar URL if it's a relative path
+    // Construct full avatar URL
     const getAvatarUrl = () => {
         if (!user.avatar) {
             return "https://via.placeholder.com/150/4A90E2/FFFFFF?text=Patient";
         }
         
-        // If avatar starts with http, it's already a full URL
+        // If avatar starts with http, it's already a full URL (Google OAuth)
         if (user.avatar.startsWith('http')) {
             return user.avatar;
         }
         
-        // Otherwise, prepend the API base URL
+        // Otherwise, prepend the API base URL (local uploads)
         return `${API_BASE_URL}${user.avatar}`;
     };
 
@@ -39,11 +38,11 @@ const Sidebar = ({ user, onLogout }) => {
                     alt="Profile" 
                     className="profile-picture"
                     onError={(e) => {
-                        // Fallback to placeholder if image fails to load
                         e.target.src = "https://via.placeholder.com/150/4A90E2/FFFFFF?text=Patient";
                     }}
                 />
                 <h4 className="profile-username">@{user.username}</h4>
+                {user.name && <p className="profile-name">{user.name}</p>}
             </div>
             
             <nav className="navigation-menu">
@@ -55,7 +54,7 @@ const Sidebar = ({ user, onLogout }) => {
                     <FiUser />
                     <span>Health Profile</span>
                 </NavLink>
-                 <NavLink to="/edit-profile" className="nav-item">
+                <NavLink to="/edit-profile" className="nav-item">
                     <FiEdit2 />
                     <span>Edit Profile</span>
                 </NavLink>

@@ -1,309 +1,342 @@
-import React, { useState } from 'react';
-import '../css/AuthPage.css';
-import { useNavigate } from 'react-router-dom';
+import React, { useState } from "react";
+import "../css/AuthPage.css";
+import { useNavigate } from "react-router-dom";
+import { GoogleLogin } from "@react-oauth/google";
+import { jwtDecode } from "jwt-decode";
 
 const AuthPage = ({ onLoginSuccess }) => {
-    const [isLogin, setIsLogin] = useState(true);
-    const [username, setUsername] = useState('');
-    const [ageRange, setAgeRange] = useState('');
-    const [gender, setGender] = useState('');
-    const [smokingStatus, setSmokingStatus] = useState('');
-    const [hasHypertension, setHasHypertension] = useState(false);
-    const [hasDiabetes, setHasDiabetes] = useState(false);
-    const [hasAsthma, setHasAsthma] = useState(false);
-    const [previousInfections, setPreviousInfections] = useState(0);
-    const [medications, setMedications] = useState('');
-    const [allergies, setAllergies] = useState('');
-    const [lastConsultationDate, setLastConsultationDate] = useState('');
-    const [avatar, setAvatar] = useState(null);
-    const [avatarPreview, setAvatarPreview] = useState(null);
-    const [error, setError] = useState('');
-    const [success, setSuccess] = useState('');
-    const navigate = useNavigate();
+  const [isLogin, setIsLogin] = useState(true);
+  const [formData, setFormData] = useState({
+    email: "",
+    username: "",
+    full_name: "",
+    password: "",
+    confirmPassword: "",
+    username_or_email: "", 
+    login_password: "",
+  });
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
-    const handleAvatarChange = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            setAvatar(file);
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setAvatarPreview(reader.result);
-            };
-            reader.readAsDataURL(file);
-        }
-    };
+  const handleInputChange = (e) => {
+    setFormData({
+      ...formData,
+      [e.target.name]: e.target.value,
+    });
+    setError(""); 
+  };
 
-    const resetForm = () => {
-        setUsername('');
-        setAgeRange('');
-        setGender('');
-        setSmokingStatus('');
-        setHasHypertension(false);
-        setHasDiabetes(false);
-        setHasAsthma(false);
-        setPreviousInfections(0);
-        setMedications('');
-        setAllergies('');
-        setLastConsultationDate('');
-        setAvatar(null);
-        setAvatarPreview(null);
-    };
+  const handleGoogleSuccess = async (credentialResponse) => {
+    setLoading(true);
+    setError("");
+    
+    try {
+      const decoded = jwtDecode(credentialResponse.credential);
+      const googleUser = {
+        email: decoded.email,
+        name: decoded.name,
+        picture: decoded.picture,
+        google_id: decoded.sub,
+      };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setError('');
-        setSuccess('');
+      const response = await fetch("http://localhost:8000/google-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(googleUser),
+      });
 
-        if (isLogin) {
-            try {
-                const response = await fetch('http://localhost:8000/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username }),
-                });
-                
-                const data = await response.json();
-                
-                if (response.ok) {
-                    onLoginSuccess(data.user_info); 
-                    navigate('/chat');
-                } else {
-                    setError(data.detail || 'Login failed.');
-                }
-            } catch (err) {
-                setError('Cannot connect to server. Is the API running?');
-                console.error('Login error:', err);
-            }
-        } else {
-            // Registration
-            const formData = new FormData();
-            formData.append('patient_id', username);
-            formData.append('age_range', ageRange);
-            formData.append('gender', gender);
-            formData.append('smoking_status', smokingStatus);
-            formData.append('has_hypertension', hasHypertension);
-            formData.append('has_diabetes', hasDiabetes);
-            formData.append('has_asthma_history', hasAsthma);
-            formData.append('previous_respiratory_infections', previousInfections);
-            formData.append('current_medications', medications);
-            formData.append('allergies', allergies);
-            formData.append('last_consultation_date', lastConsultationDate);
-            
-            if (avatar) {
-                formData.append('avatar', avatar);
-            }
+      const data = await response.json();
 
-            try {
-                const response = await fetch('http://localhost:8000/register', {
-                    method: 'POST',
-                    body: formData,
-                });
-                
-                const data = await response.json();
-                
-                if (response.ok) {
-                    setSuccess('Registration successful! Please login.');
-                    setIsLogin(true);
-                    resetForm();
-                } else {
-                    setError(data.detail || 'Registration failed.');
-                }
-            } catch (err) {
-                setError('Cannot connect to server. Is the API running?');
-                console.error('Registration error:', err);
-            }
-        }
-    };
+      if (response.ok) {
+        localStorage.setItem("access_token", data.access_token);
+        onLoginSuccess(data.user_info);
+        navigate("/chat");
+      } else {
+        setError(data.detail || "Google login failed.");
+      }
+    } catch (err) {
+      console.error("Google Login Error:", err);
+      setError("Something went wrong during Google login.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    return (
-        <div className="auth-container">
-            <div className="auth-form-wrapper">
-                <h2>{isLogin ? 'Patient Login' : 'Patient Registration'}</h2>
-                
-                {error && <p className="message error">{error}</p>}
-                {success && <p className="message success">{success}</p>}
-                
-                <form onSubmit={handleSubmit}>
-                    {!isLogin && (
-                        <>
-                            <div className="input-group">
-                                <label>Profile Picture (Optional)</label>
-                                <input 
-                                    type="file" 
-                                    accept="image/*"
-                                    onChange={handleAvatarChange}
-                                />
-                                {avatarPreview && (
-                                    <div style={{ marginTop: '10px', textAlign: 'center' }}>
-                                        <img 
-                                            src={avatarPreview} 
-                                            alt="Avatar preview" 
-                                            style={{ 
-                                                width: '100px', 
-                                                height: '100px', 
-                                                borderRadius: '50%', 
-                                                objectFit: 'cover',
-                                                border: '2px solid #be8456'
-                                            }} 
-                                        />
-                                    </div>
-                                )}
-                            </div>
-                            
-                            <div className="input-group">
-                                <label>Username (Patient ID)</label>
-                                <input 
-                                    type="text" 
-                                    value={username} 
-                                    onChange={(e) => setUsername(e.target.value)} 
-                                    required 
-                                />
-                            </div>
-                            
-                            <div className="input-group">
-                                <label>Age Range</label>
-                                <select 
-                                    value={ageRange} 
-                                    onChange={(e) => setAgeRange(e.target.value)} 
-                                    required
-                                >
-                                    <option value="">Select...</option>
-                                    <option value="0-9">0-9</option>
-                                    <option value="10-19">10-19</option>
-                                    <option value="20-29">20-29</option>
-                                    <option value="30-39">30-39</option>
-                                    <option value="40-49">40-49</option>
-                                    <option value="50+">50+</option>
-                                </select>
-                            </div>
-                            
-                            <div className="input-group">
-                                <label>Gender</label>
-                                <select 
-                                    value={gender} 
-                                    onChange={(e) => setGender(e.target.value)} 
-                                    required
-                                >
-                                    <option value="">Select...</option>
-                                    <option value="Male">Male</option>
-                                    <option value="Female">Female</option>
-                                    <option value="Other">Other</option>
-                                </select>
-                            </div>
-                            
-                            <div className="input-group">
-                                <label>Smoking Status</label>
-                                <select 
-                                    value={smokingStatus} 
-                                    onChange={(e) => setSmokingStatus(e.target.value)} 
-                                    required
-                                >
-                                    <option value="">Select...</option>
-                                    <option value="Never Smoked">Never Smoked</option>
-                                    <option value="Former Smoker">Former Smoker</option>
-                                    <option value="Current Smoker">Current Smoker</option>
-                                </select>
-                            </div>
-                            
-                            <div className="input-group">
-                                <label>Last Consultation Date (Optional)</label>
-                                <input 
-                                    type="date" 
-                                    value={lastConsultationDate} 
-                                    onChange={(e) => setLastConsultationDate(e.target.value)} 
-                                />
-                            </div>
-                            
-                            <div className="input-group">
-                                <label>Current Medications (Optional)</label>
-                                <textarea 
-                                    placeholder="List any current medications" 
-                                    value={medications} 
-                                    onChange={(e) => setMedications(e.target.value)} 
-                                />
-                            </div>
-                            
-                            <div className="input-group">
-                                <label>Allergies (Optional)</label>
-                                <textarea 
-                                    placeholder="List any known allergies" 
-                                    value={allergies} 
-                                    onChange={(e) => setAllergies(e.target.value)} 
-                                />
-                            </div>
-                            
-                            <div className="input-group">
-                                <label>Previous Respiratory Infections</label>
-                                <input 
-                                    type="number" 
-                                    min="0" 
-                                    value={previousInfections} 
-                                    onChange={(e) => setPreviousInfections(parseInt(e.target.value, 10) || 0)} 
-                                />
-                            </div>
-                            
-                            <div className="checkbox-group">
-                                <label>
-                                    <input 
-                                        type="checkbox" 
-                                        checked={hasHypertension} 
-                                        onChange={(e) => setHasHypertension(e.target.checked)} 
-                                    />
-                                    History of Hypertension
-                                </label>
-                                <label>
-                                    <input 
-                                        type="checkbox" 
-                                        checked={hasDiabetes} 
-                                        onChange={(e) => setHasDiabetes(e.target.checked)} 
-                                    />
-                                    History of Diabetes
-                                </label>
-                                <label>
-                                    <input 
-                                        type="checkbox" 
-                                        checked={hasAsthma} 
-                                        onChange={(e) => setHasAsthma(e.target.checked)} 
-                                    />
-                                    History of Asthma
-                                </label>
-                            </div>
-                        </>
-                    )}
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setError("");
+    setSuccess("");
+    setLoading(true);
 
-                    {isLogin && (
-                        <div className="input-group">
-                            <label>Username (Patient ID)</label>
-                            <input 
-                                type="text" 
-                                value={username} 
-                                onChange={(e) => setUsername(e.target.value)} 
-                                required 
-                            />
-                        </div>
-                    )}
-                    
-                    <button type="submit" className="auth-button">
-                        {isLogin ? 'Login' : 'Register'}
-                    </button>
-                </form>
-                
-                <p className="toggle-text">
-                    {isLogin ? "Don't have an account?" : 'Already have an account?'}
-                    <button 
-                        onClick={() => {
-                            setIsLogin(!isLogin);
-                            setError('');
-                            setSuccess('');
-                        }} 
-                        className="toggle-button"
-                    >
-                        {isLogin ? 'Register' : 'Login'}
-                    </button>
-                </p>
+    if (!formData.email || !formData.username || !formData.full_name || !formData.password) {
+      setError("All fields are required.");
+      setLoading(false);
+      return;
+    }
+
+    if (formData.password !== formData.confirmPassword) {
+      setError("Passwords do not match.");
+      setLoading(false);
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      setError("Password must be at least 6 characters long.");
+      setLoading(false);
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      setError("Please enter a valid email address.");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const formDataToSend = new FormData();
+      formDataToSend.append("email", formData.email);
+      formDataToSend.append("username", formData.username);
+      formDataToSend.append("full_name", formData.full_name);
+      formDataToSend.append("password", formData.password);
+
+      const response = await fetch("http://localhost:8000/register", {
+        method: "POST",
+        body: formDataToSend,
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setSuccess("Registration successful! You can now login.");
+        setFormData({
+          email: "",
+          username: "",
+          full_name: "",
+          password: "",
+          confirmPassword: "",
+          username_or_email: "",
+          login_password: "",
+        });
+        // Switch to login after 2 seconds
+        setTimeout(() => {
+          setIsLogin(true);
+          setSuccess("");
+        }, 2000);
+      } else {
+        setError(data.detail || "Registration failed. Please try again.");
+      }
+    } catch (err) {
+      console.error("Registration Error:", err);
+      setError("Something went wrong. Please try again later.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+
+    if (!formData.username_or_email || !formData.login_password) {
+      setError("Username/Email and password are required.");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const formDataToSend = new FormData();
+      formDataToSend.append("username_or_email", formData.username_or_email);
+      formDataToSend.append("password", formData.login_password);
+
+      const response = await fetch("http://localhost:8000/login", {
+        method: "POST",
+        body: formDataToSend,
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        // Store token in localStorage
+        localStorage.setItem("access_token", data.access_token);
+        onLoginSuccess(data.user_info);
+        navigate("/chat");
+      } else {
+        setError(data.detail || "Login failed. Please check your credentials.");
+      }
+    } catch (err) {
+      console.error("Login Error:", err);
+      setError("Something went wrong. Please try again later.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="auth-container">
+      <div className="auth-form-wrapper">
+        <h2>{isLogin ? "Patient Login" : "Patient Registration"}</h2>
+        {error && <p className="message error">{error}</p>}
+        {success && <p className="message success">{success}</p>}
+
+        {isLogin ? (
+          <form onSubmit={handleLogin}>
+            <div className="input-group">
+              <label>Username or Email</label>
+              <input
+                type="text"
+                name="username_or_email"
+                value={formData.username_or_email}
+                onChange={handleInputChange}
+                placeholder="Enter your username or email"
+                required
+                disabled={loading}
+              />
             </div>
+
+            <div className="input-group">
+              <label>Password</label>
+              <input
+                type="password"
+                name="login_password"
+                value={formData.login_password}
+                onChange={handleInputChange}
+                placeholder="Enter your password"
+                required
+                disabled={loading}
+              />
+            </div>
+
+            <button type="submit" className="auth-button" disabled={loading}>
+              {loading ? "Logging in..." : "Login"}
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleRegister}>
+            <div className="input-group">
+              <label>Email Address</label>
+              <input
+                type="email"
+                name="email"
+                value={formData.email}
+                onChange={handleInputChange}
+                placeholder="your.email@example.com"
+                required
+                disabled={loading}
+              />
+            </div>
+
+            <div className="input-group">
+              <label>Username</label>
+              <input
+                type="text"
+                name="username"
+                value={formData.username}
+                onChange={handleInputChange}
+                placeholder="Choose a unique username"
+                required
+                disabled={loading}
+              />
+            </div>
+
+            <div className="input-group">
+              <label>Full Name</label>
+              <input
+                type="text"
+                name="full_name"
+                value={formData.full_name}
+                onChange={handleInputChange}
+                placeholder="John Doe"
+                required
+                disabled={loading}
+              />
+            </div>
+
+            <div className="input-group">
+              <label>Password</label>
+              <input
+                type="password"
+                name="password"
+                value={formData.password}
+                onChange={handleInputChange}
+                placeholder="Minimum 6 characters"
+                required
+                disabled={loading}
+                minLength={6}
+              />
+            </div>
+
+            <div className="input-group">
+              <label>Confirm Password</label>
+              <input
+                type="password"
+                name="confirmPassword"
+                value={formData.confirmPassword}
+                onChange={handleInputChange}
+                placeholder="Re-enter your password"
+                required
+                disabled={loading}
+                minLength={6}
+              />
+            </div>
+
+            <button type="submit" className="auth-button" disabled={loading}>
+              {loading ? "Registering..." : "Register"}
+            </button>
+          </form>
+        )}
+
+        {/* Google OAuth */}
+        <div style={{ marginTop: "1.5rem", textAlign: "center" }}>
+          <div style={{ 
+            display: "flex", 
+            alignItems: "center", 
+            margin: "1rem 0",
+            gap: "10px"
+          }}>
+            <div style={{ flex: 1, height: "1px", backgroundColor: "#ddd" }}></div>
+            <span style={{ color: "#666", fontSize: "0.9rem" }}>OR</span>
+            <div style={{ flex: 1, height: "1px", backgroundColor: "#ddd" }}></div>
+          </div>
+          
+          <GoogleLogin
+            onSuccess={handleGoogleSuccess}
+            onError={() => setError("Google Sign-In failed.")}
+            useOneTap
+            text={isLogin ? "signin_with" : "signup_with"}
+          />
         </div>
-    );
+
+        {/* Toggle between Login/Register */}
+        <p className="toggle-text">
+          {isLogin ? "Don't have an account?" : "Already have an account?"}
+          <button
+            onClick={() => {
+              setIsLogin(!isLogin);
+              setError("");
+              setSuccess("");
+              setFormData({
+                email: "",
+                username: "",
+                full_name: "",
+                password: "",
+                confirmPassword: "",
+                username_or_email: "",
+                login_password: "",
+              });
+            }}
+            className="toggle-button"
+            disabled={loading}
+          >
+            {isLogin ? "Register" : "Login"}
+          </button>
+        </p>
+      </div>
+    </div>
+  );
 };
 
 export default AuthPage;

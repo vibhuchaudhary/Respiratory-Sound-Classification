@@ -1,5 +1,10 @@
+-- Updated schema with email and password fields
 CREATE TABLE IF NOT EXISTS patients (
     patient_id VARCHAR(255) PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    username VARCHAR(100) UNIQUE NOT NULL,
+    full_name VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
     age_range VARCHAR(20),
     gender VARCHAR(20),
     smoking_status VARCHAR(50),
@@ -11,6 +16,8 @@ CREATE TABLE IF NOT EXISTS patients (
     allergies TEXT,
     last_consultation_date TIMESTAMP,
     avatar TEXT,
+    auth_provider VARCHAR(50) DEFAULT 'local', -- 'local' or 'google'
+    is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -43,3 +50,5 @@ CREATE INDEX IF NOT EXISTS idx_patient_history ON medical_history(patient_id);
 CREATE INDEX IF NOT EXISTS idx_visit_date ON medical_history(visit_date);
 CREATE INDEX IF NOT EXISTS idx_audit_patient ON audit_log(patient_id);
 CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(query_timestamp);
+CREATE INDEX IF NOT EXISTS idx_patient_email ON patients(email);
+CREATE INDEX IF NOT EXISTS idx_patient_username ON patients(username);
