@@ -44,7 +44,7 @@ Follow these instructions to get a local copy of the project up and running for 
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/anjalichaturvedi/aira.git
+git clone https://github.com/Yuvraj0311/AIRA.git
 cd aira
 ```
 
@@ -125,11 +125,20 @@ LOG_LEVEL= INFO
 ```
 aira/
 ├── backend/            # FastAPI server, API endpoints, and business logic
-│   ├── .env.example    # Environment variable template
-│   ├── main.py         # Main application entrypoint
-│   └── requirements.txt
-|   └── database.py     # Database manager
-|   └── schema.sql      # Database schema
+|   ├── data/                     # Information about the dataset used for the model
+|   │   └── medical_knowledge/    # Medical knowledge base documents
+|   │       └── Gale_Encyclopedia.pdf
+|   ├── models/                   # Trained Deep Learning model
+|   │   └── trained_model.keras
+|   ├── .env.example              # Environment variable template
+|   ├── __init__.py               # Python package initializer
+|   ├── audio_classifier.py       # Audio classification model
+|   ├── data_ingest.py            # Medical knowledge ingestion & vectorization
+|   ├── database.py               # Database manager & RAG retrieval agent
+|   ├── llm_agent.py              # LLM agent with conversational logic
+|   ├── main.py                   # Main application entrypoint (FastAPI)
+|   ├── requirements.txt          # Python dependencies
+|   └── schema.sql                # Database schema
 ├── data/               # Information about the dataset used for the model
 ├── frontend/           # React frontend application (Vite-based)
 │   ├── public/
