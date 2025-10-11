@@ -816,8 +816,13 @@ async def update_patient_profile(
         agent.cleanup()
 
 # ---------------- STATIC FILES ---------------- #
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-
+if os.path.exists("uploads"):
+    app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+else:
+    os.makedirs("uploads/audio", exist_ok=True)
+    os.makedirs("uploads/avatars", exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+    
 # ---------------- ERROR HANDLERS ---------------- #
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
