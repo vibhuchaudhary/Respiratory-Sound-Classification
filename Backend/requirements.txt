@@ -10,7 +10,7 @@ resampy==0.4.3
 
 # Machine Learning
 tensorflow==2.20.0
-numpy
+numpy==1.26.0
 scikit-learn
 
 # LLM & RAG
