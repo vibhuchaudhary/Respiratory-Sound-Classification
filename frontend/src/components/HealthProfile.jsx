@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import '../css/HealthProfile.css';
-
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, '');
+import { API_BASE_URL } from '../config/api';
 
 const HealthProfile = ({ user }) => {
     const [healthData, setHealthData] = useState(null);
@@ -82,7 +81,6 @@ const HealthProfile = ({ user }) => {
             </div>
 
             <div className="profile-content">
-                {/* Basic Information Card */}
                 <div className="profile-card">
                     <h3>📋 Basic Information</h3>
                     <div className="info-grid">
@@ -113,7 +111,6 @@ const HealthProfile = ({ user }) => {
                     </div>
                 </div>
 
-                {/* Medical History Card */}
                 <div className="profile-card">
                     <h3>📊 Medical History</h3>
                     <div className="info-grid">
@@ -136,7 +133,6 @@ const HealthProfile = ({ user }) => {
                     </div>
                 </div>
 
-                {/* Comorbidities Card */}
                 <div className="profile-card">
                     <h3>🩺 Comorbidities</h3>
                     {healthData.comorbidities && healthData.comorbidities.length > 0 ? (
@@ -152,7 +148,6 @@ const HealthProfile = ({ user }) => {
                     )}
                 </div>
 
-                {/* Medications Card */}
                 <div className="profile-card">
                     <h3>💊 Current Medications</h3>
                     {healthData.current_medications && healthData.current_medications.trim() ? (
@@ -162,7 +157,6 @@ const HealthProfile = ({ user }) => {
                     )}
                 </div>
 
-                {/* Allergies Card */}
                 <div className="profile-card">
                     <h3>⚠️ Allergies</h3>
                     {healthData.allergies && healthData.allergies.trim() ? (
@@ -172,7 +166,6 @@ const HealthProfile = ({ user }) => {
                     )}
                 </div>
 
-                {/* Information Note */}
                 <div className="profile-card info-note">
                     <p>
                         ℹ️ This information is used to provide personalized health recommendations. 

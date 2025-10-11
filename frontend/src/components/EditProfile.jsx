@@ -2,8 +2,8 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { toast } from "react-hot-toast";
 import "../css/EditProfile.css";
+import { API_BASE_URL, getAvatarUrl } from "../config/api";
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, '');
 const GENDER_OPTIONS = ["Male", "Female", "Other", "Prefer not to say"];
 const SMOKING_STATUS_OPTIONS = ["Never", "Former", "Current"];
 
@@ -52,10 +52,7 @@ export default function EditProfile({ user, onUserUpdate }) {
         }));
         
         if (res.data.avatar) {
-          const avatarUrl = res.data.avatar.startsWith('http') 
-            ? res.data.avatar 
-            : `${API_BASE_URL}${res.data.avatar}`;
-          setAvatarPreview(avatarUrl);
+          setAvatarPreview(getAvatarUrl(res.data.avatar));
         }
       })
       .catch((err) => {
@@ -81,6 +78,13 @@ export default function EditProfile({ user, onUserUpdate }) {
         return;
       }
       
+      // Validate file type
+      const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+      if (!validTypes.includes(file.type)) {
+        toast.error("Invalid image format. Please use JPG, PNG, GIF, or WEBP");
+        return;
+      }
+      
       setAvatarFile(file);
       // Show preview of selected image
       const reader = new FileReader();
@@ -88,13 +92,6 @@ export default function EditProfile({ user, onUserUpdate }) {
         setAvatarPreview(reader.result);
       };
       reader.readAsDataURL(file);
-    }
-
-    if (res.data.avatar) {
-        const avatarUrl = res.data.avatar.startsWith('http') 
-            ? res.data.avatar 
-            : `${API_BASE_URL}${res.data.avatar.startsWith('/') ? res.data.avatar : '/' + res.data.avatar}`;
-        setAvatarPreview(avatarUrl);
     }
   };
 
@@ -186,7 +183,7 @@ export default function EditProfile({ user, onUserUpdate }) {
               alt="Avatar preview" 
               className="avatar-preview"
               onError={(e) => {
-                e.target.src = "https://via.placeholder.com/150/4A90E2/FFFFFF?text=Patient";
+                e.target.src = "https://ui-avatars.com/api/?name=Patient&size=150&background=4A90E2&color=ffffff";
               }}
             />
           )}

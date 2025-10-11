@@ -3,6 +3,7 @@ import "../css/AuthPage.css";
 import { useNavigate } from "react-router-dom";
 import { GoogleLogin } from "@react-oauth/google";
 import { jwtDecode } from "jwt-decode";
+import { getApiUrl } from "../config/api";
 
 const AuthPage = ({ onLoginSuccess }) => {
   const [isLogin, setIsLogin] = useState(true);
@@ -41,7 +42,7 @@ const AuthPage = ({ onLoginSuccess }) => {
         google_id: decoded.sub,
       };
 
-      const response = await fetch("http://localhost:8000/google-login", {
+      const response = await fetch(getApiUrl("/google-login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(googleUser),
@@ -102,7 +103,7 @@ const AuthPage = ({ onLoginSuccess }) => {
       formDataToSend.append("full_name", formData.full_name);
       formDataToSend.append("password", formData.password);
 
-      const response = await fetch("http://localhost:8000/register", {
+      const response = await fetch(getApiUrl("/register"), {
         method: "POST",
         body: formDataToSend,
       });
@@ -120,7 +121,6 @@ const AuthPage = ({ onLoginSuccess }) => {
           username_or_email: "",
           login_password: "",
         });
-        // Switch to login after 2 seconds
         setTimeout(() => {
           setIsLogin(true);
           setSuccess("");
@@ -152,7 +152,7 @@ const AuthPage = ({ onLoginSuccess }) => {
       formDataToSend.append("username_or_email", formData.username_or_email);
       formDataToSend.append("password", formData.login_password);
 
-      const response = await fetch("http://localhost:8000/login", {
+      const response = await fetch(getApiUrl("/login"), {
         method: "POST",
         body: formDataToSend,
       });
@@ -160,7 +160,6 @@ const AuthPage = ({ onLoginSuccess }) => {
       const data = await response.json();
 
       if (response.ok) {
-        // Store token in localStorage
         localStorage.setItem("access_token", data.access_token);
         onLoginSuccess(data.user_info);
         navigate("/chat");
@@ -289,7 +288,6 @@ const AuthPage = ({ onLoginSuccess }) => {
           </form>
         )}
 
-        {/* Google OAuth */}
         <div style={{ marginTop: "1.5rem", textAlign: "center" }}>
           <div style={{ 
             display: "flex", 
@@ -310,7 +308,6 @@ const AuthPage = ({ onLoginSuccess }) => {
           />
         </div>
 
-        {/* Toggle between Login/Register */}
         <p className="toggle-text">
           {isLogin ? "Don't have an account?" : "Already have an account?"}
           <button
