@@ -1,6 +1,6 @@
 """
 main.py - FastAPI Backend for A.I.R.A. (AI Respiratory Assistant)
-Updated with email, username, password authentication and Google OAuth
+FIXED VERSION FOR DEPLOYMENT
 """
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Depends
@@ -26,9 +26,9 @@ import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # ---------------- JWT CONFIG ---------------- #
-SECRET_KEY = os.getenv("JWT_SECRET_KEY")
-if not SECRET_KEY:
-    raise ValueError("JWT_SECRET_KEY environment variable not set!")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "CHANGE_THIS_IN_PRODUCTION_12345")
+if SECRET_KEY == "CHANGE_THIS_IN_PRODUCTION_12345":
+    logging.warning("⚠️ Using default JWT secret key! Set JWT_SECRET_KEY environment variable in production!")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours
 
@@ -122,10 +122,13 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# ---------------- MIDDLEWARE ---------------- #
+# ---------------- CORS MIDDLEWARE (FIXED FOR DEPLOYMENT) ---------------- #
+# Get allowed origins from environment variable or use defaults
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,  # Configure this in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -198,6 +201,11 @@ class PatientDataResponse(BaseModel):
     current_medications: Optional[str]
     allergies: Optional[str]
     avatar: Optional[str] = None
+    has_hypertension: Optional[bool] = False
+    has_diabetes: Optional[bool] = False
+    has_asthma_history: Optional[bool] = False
+    previous_respiratory_infections: Optional[int] = 0
+    last_consultation_date: Optional[str] = None
 
 # ---------------- ENDPOINTS ---------------- #
 @app.get("/", tags=["General"])
@@ -207,6 +215,7 @@ async def root():
         "message": "A.I.R.A API",
         "version": "2.0.0",
         "status": "operational",
+        "environment": "production" if os.getenv("RENDER") else "development",
         "endpoints": {
             "docs": "/docs",
             "health": "/health",
@@ -231,7 +240,8 @@ async def health_check():
         "timestamp": datetime.now().isoformat(),
         "services": {
             "chatbot": "available" if chatbot else "unavailable",
-            "audio_classifier": "available" if audio_classifier else "unavailable"
+            "audio_classifier": "available" if audio_classifier else "unavailable",
+            "database": "configured" if os.getenv("POSTGRES_DB") else "not configured"
         }
     }
 
@@ -255,12 +265,10 @@ async def register_patient(
 ):
     """Register a new patient with email, username, and password"""
     
-    # Generate unique patient ID
     patient_id = f"PT_{uuid.uuid4().hex[:12].upper()}"
     
     avatar_path = None
     if avatar:
-        # Validate file type
         allowed_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
         file_ext = os.path.splitext(avatar.filename)[1].lower()
         
@@ -270,7 +278,6 @@ async def register_patient(
                 detail=f"Invalid image format. Allowed formats: {', '.join(allowed_extensions)}"
             )
         
-        # Save avatar
         os.makedirs("uploads/avatars", exist_ok=True)
         avatar_filename = f"{username}_{uuid.uuid4()}{file_ext}"
         avatar_path = os.path.join("uploads/avatars", avatar_filename)
@@ -342,7 +349,6 @@ async def login_for_access_token(
     """Login with username/email and password"""
     agent = DataRetrievalAgent()
     try:
-        # Get user from database
         user = agent.db_manager.get_patient_for_auth(username_or_email.lower())
         
         if not user:
@@ -351,21 +357,18 @@ async def login_for_access_token(
                 detail="Invalid credentials. Please check your username/email and password."
             )
         
-        # Check if this is a Google OAuth account
         if user.get('auth_provider') == 'google':
             raise HTTPException(
                 status_code=401,
                 detail="This account uses Google Sign-In. Please use 'Sign in with Google'."
             )
         
-        # Verify password
         if not agent.db_manager.verify_password(password, user['password_hash']):
             raise HTTPException(
                 status_code=401,
                 detail="Invalid credentials. Please check your username/email and password."
             )
         
-        # Get full patient profile
         patient_profile = agent.db_manager.get_patient_data(user['patient_id'])
         if not patient_profile:
             raise HTTPException(
@@ -373,10 +376,9 @@ async def login_for_access_token(
                 detail="Failed to load patient profile."
             )
         
-        # Create access token
         access_token = create_access_token(data={"sub": user["patient_id"]})
         
-        avatar_url = patient_profile.get("avatar") or "https://via.placeholder.com/150/4A90E2/FFFFFF?text=Patient"
+        avatar_url = patient_profile.get("avatar") or "https://ui-avatars.com/api/?name=Patient&size=150&background=4A90E2&color=ffffff"
         
         logger.info(f"Patient logged in: {user['username']}")
         
@@ -390,7 +392,8 @@ async def login_for_access_token(
                 "email": patient_profile.get("email"),
                 "avatar": avatar_url,
                 "age_range": patient_profile.get("age_range"),
-                "gender": patient_profile.get("gender")
+                "gender": patient_profile.get("gender"),
+                "auth_provider": user.get("auth_provider", "local")
             }
         )
     except HTTPException:
@@ -409,18 +412,14 @@ async def google_login(google_data: GoogleAuthData):
     """Login or register with Google OAuth"""
     agent = DataRetrievalAgent()
     try:
-        # Check if user already exists
         user = agent.db_manager.get_patient_for_auth(google_data.email.lower())
         
         if user:
-            # Existing user - login
             patient_profile = agent.db_manager.get_patient_data(user['patient_id'])
         else:
-            # New user - register
             patient_id = f"PT_{uuid.uuid4().hex[:12].upper()}"
             username = google_data.email.split('@')[0]
             
-            # Check if username exists, make it unique if needed
             counter = 1
             original_username = username
             while agent.db_manager.get_patient_for_auth(username):
@@ -432,7 +431,7 @@ async def google_login(google_data: GoogleAuthData):
                 'email': google_data.email.lower(),
                 'username': username,
                 'full_name': google_data.name,
-                'password': None,  # No password for Google auth
+                'password': None,
                 'avatar': google_data.picture,
                 'auth_provider': 'google'
             }
@@ -447,7 +446,6 @@ async def google_login(google_data: GoogleAuthData):
             patient_profile = agent.db_manager.get_patient_data(patient_id)
             logger.info(f"New Google user registered: {google_data.email}")
         
-        # Create access token
         access_token = create_access_token(data={"sub": patient_profile["patient_id"]})
         
         logger.info(f"Google login successful: {google_data.email}")
@@ -462,7 +460,8 @@ async def google_login(google_data: GoogleAuthData):
                 "email": patient_profile.get("email"),
                 "avatar": patient_profile.get("avatar") or google_data.picture,
                 "age_range": patient_profile.get("age_range"),
-                "gender": patient_profile.get("gender")
+                "gender": patient_profile.get("gender"),
+                "auth_provider": "google"
             }
         )
     except HTTPException:
@@ -569,13 +568,7 @@ async def complete_respiratory_analysis(
     patient_id: str = Form(..., description="Patient identifier"),
     query: str = Form(..., description="Patient's medical question")
 ):
-    """
-    Complete end-to-end analysis workflow:
-    1. Classify respiratory disease from audio
-    2. Retrieve patient medical history
-    3. Get medical knowledge from vector DB
-    4. Generate personalized AI response
-    """
+    """Complete end-to-end analysis workflow"""
     file_path = None
     try:
         if not audio_classifier or not chatbot:
@@ -626,14 +619,12 @@ async def complete_respiratory_analysis(
             detail=f"Audio analysis failed: {str(e)}"
         )
     finally:
-        # Clean up uploaded file
         if file_path and os.path.exists(file_path):
             try:
                 os.remove(file_path)
                 logger.info(f"Cleaned up audio file: {file_path}")
             except Exception as e:
                 logger.warning(f"Failed to delete audio file: {e}")
-
 
 # ---------------- PATIENT DATA MANAGEMENT ---------------- #
 @app.get("/api/patient/{patient_id}", response_model=PatientDataResponse, tags=["Patient Data"])
@@ -667,7 +658,12 @@ async def get_patient_data(patient_id: str):
             comorbidities=comorbidities,
             current_medications=patient_data.get('current_medications'),
             allergies=patient_data.get('allergies'),
-            avatar=patient_data.get('avatar')
+            avatar=patient_data.get('avatar'),
+            has_hypertension=patient_data.get('has_hypertension'),
+            has_diabetes=patient_data.get('has_diabetes'),
+            has_asthma_history=patient_data.get('has_asthma_history'),
+            previous_respiratory_infections=patient_data.get('previous_respiratory_infections'),
+            last_consultation_date=patient_data.get('last_consultation_date')
         )
     except HTTPException:
         raise
@@ -744,7 +740,6 @@ async def update_patient_profile(
     """Update patient profile information including avatar and password"""
     agent = DataRetrievalAgent()
     try:
-        # Find patient by username
         user = agent.db_manager.get_patient_for_auth(username)
         if not user:
             raise HTTPException(status_code=404, detail="Patient not found")
@@ -781,7 +776,7 @@ async def update_patient_profile(
             os.makedirs("uploads/avatars", exist_ok=True)
             
             old_avatar = patient.get('avatar')
-            if old_avatar and os.path.exists(old_avatar.lstrip('/')):
+            if old_avatar and not old_avatar.startswith('http') and os.path.exists(old_avatar.lstrip('/')):
                 try:
                     os.remove(old_avatar.lstrip('/'))
                 except Exception as e:
@@ -842,10 +837,12 @@ if __name__ == "__main__":
     logger.info("Starting A.I.R.A Backend Server...")
     logger.info("API Documentation available at: http://localhost:8000/docs")
     
+    port = int(os.getenv("PORT", 8000))
+    
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
-        reload=True,
+        port=port,
+        reload=False if os.getenv("RENDER") else True,
         log_level="info"
     )

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import '../css/Chatbot.css';
 import { FiUser, FiCpu, FiSend, FiPaperclip, FiXCircle } from 'react-icons/fi';
+import { getApiUrl } from '../config/api';
 
 const Chatbot = ({ user }) => {
   const [messages, setMessages] = useState([
@@ -15,7 +16,6 @@ const Chatbot = ({ user }) => {
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  // Auto-scroll to newest message
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
@@ -24,7 +24,6 @@ const Chatbot = ({ user }) => {
     const file = event.target.files[0];
     if (!file) return;
     
-    // Check file type
     const validTypes = ['audio/wav', 'audio/mpeg', 'audio/mp3', 'audio/flac'];
     const validExtensions = /\.(wav|mp3|flac)$/i;
     
@@ -55,14 +54,13 @@ const Chatbot = ({ user }) => {
     try {
       let audioResult = null;
 
-      // Step 1: Analyze audio if present
       if (fileToSend) {
         const formData = new FormData();
         formData.append('patient_id', user.username);
         formData.append('user_query', messageToSend);
         formData.append('file', fileToSend);
 
-        const audioResponse = await fetch("http://localhost:8000/api/analyze-audio", {
+        const audioResponse = await fetch(getApiUrl("/api/analyze-audio"), {
           method: "POST",
           body: formData,
         });
@@ -79,8 +77,7 @@ const Chatbot = ({ user }) => {
         setMessages(prev => [...prev, { text: analysisInfo, sender: 'bot', isInfo: true }]);
       }
 
-      // Step 2: Get AI response
-      const chatResponse = await fetch("http://localhost:8000/api/chat", {
+      const chatResponse = await fetch(getApiUrl("/api/chat"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -102,7 +99,7 @@ const Chatbot = ({ user }) => {
     } catch (error) {
       console.error("API Error:", error);
       const errorMessage = { 
-        text: `Sorry, an error occurred: ${error.message}. Please make sure the backend is running.`, 
+        text: `Sorry, an error occurred: ${error.message}. Please try again.`, 
         sender: "bot" 
       };
       setMessages(prev => [...prev, errorMessage]);
