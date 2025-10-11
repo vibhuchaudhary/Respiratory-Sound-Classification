@@ -26,7 +26,9 @@ import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # ---------------- JWT CONFIG ---------------- #
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "A_876xKZVK2gnBtTkOGeeiOjwH83DZSGTQ6thZ15yxs")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("JWT_SECRET_KEY environment variable not set!")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours
 
