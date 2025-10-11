@@ -1,5 +1,5 @@
 """
-database.py - Data Retrieval Agent for LungScope
+database.py - Data Retrieval Agent for AIRA (FIXED VERSION)
 Handles PostgreSQL patient data and ChromaDB vector retrieval
 """
 
@@ -14,6 +14,7 @@ import chromadb
 from chromadb.config import Settings
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
+import bcrypt
 
 LOGS_DIR = 'logs'
 os.makedirs(LOGS_DIR, exist_ok=True)
@@ -61,6 +62,17 @@ class DatabaseManager:
         self.conn = None
         logger.info("DatabaseManager initialized")
 
+    @staticmethod
+    def hash_password(password: str) -> str:
+        """Hash a password using bcrypt"""
+        salt = bcrypt.gensalt()
+        hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+        return hashed.decode('utf-8')
+    
+    @staticmethod
+    def verify_password(plain_password: str, hashed_password: str) -> bool:
+        """Verify a password against its hash"""
+        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
     def connect(self):
         """Establish database connection"""
@@ -78,15 +90,7 @@ class DatabaseManager:
             logger.info("Database connection closed")
     
     def get_patient_data(self, patient_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve anonymized patient medical history from database
-        
-        Args:
-            patient_id: Unique patient identifier (anonymized)
-            
-        Returns:
-            Dictionary containing patient medical data (no raw PHI)
-        """
+        """Retrieve anonymized patient medical history from database"""
         try:
             if not self.conn:
                 self.connect()
@@ -96,6 +100,9 @@ class DatabaseManager:
             query = """
             SELECT 
                 patient_id,
+                email,
+                username,
+                full_name,
                 age_range,
                 gender,
                 smoking_status,
@@ -128,16 +135,7 @@ class DatabaseManager:
             return None
     
     def get_patient_history(self, patient_id: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """
-        Retrieve recent medical history for contextualization
-        
-        Args:
-            patient_id: Unique patient identifier
-            limit: Number of recent records to retrieve
-            
-        Returns:
-            List of recent medical events
-        """
+        """Retrieve recent medical history for contextualization"""
         try:
             if not self.conn:
                 self.connect()
@@ -171,15 +169,7 @@ class DatabaseManager:
     
     def log_query(self, patient_id: str, query_text: str, response: str, 
                   audio_result: Optional[Dict] = None):
-        """
-        Log all queries and responses for HIPAA audit trail
-        
-        Args:
-            patient_id: Patient identifier
-            query_text: User's query
-            response: System response
-            audio_result: Audio analysis results if available
-        """
+        """Log all queries and responses for HIPAA audit trail"""
         try:
             if not self.conn:
                 self.connect()
@@ -209,24 +199,28 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Error logging query to audit trail: {e}")
     
-    def get_patient_for_auth(self, patient_id: str) -> Optional[Dict[str, Any]]:
-        """Get patient for authentication (no password check needed)"""
+    def get_patient_for_auth(self, username_or_email: str) -> Optional[Dict[str, Any]]:
+        """Get patient for authentication by username or email"""
         try:
             if not self.conn:
                 self.connect()
             
             cursor = self.conn.cursor(cursor_factory=RealDictCursor)
             
-            query = "SELECT patient_id FROM patients WHERE patient_id = %s"
+            query = """
+                SELECT patient_id, username, email, password_hash, auth_provider 
+                FROM patients 
+                WHERE username = %s OR email = %s
+            """
             
-            cursor.execute(query, (patient_id,))
+            cursor.execute(query, (username_or_email, username_or_email))
             result = cursor.fetchone()
             cursor.close()
             
             if result:
                 return dict(result)
             else:
-                logger.warning(f"Authentication attempt for non-existent patient: {patient_id}")
+                logger.warning(f"Authentication attempt for non-existent user: {username_or_email}")
                 return None
                 
         except Exception as e:
@@ -234,45 +228,35 @@ class DatabaseManager:
             return None
     
     def create_patient(self, patient_data: Dict[str, Any]) -> bool:
-        """
-        Inserts a new patient record into the database WITHOUT password.
-        
-        Args:
-            patient_data: A dictionary containing all patient information.
-            
-        Returns:
-            True if creation is successful, False otherwise.
-        """
+        """Inserts a new patient record into the database WITH hashed password"""
         try:
             if not self.conn:
                 self.connect()
             
             cursor = self.conn.cursor()
             
-            # Handle optional last_consultation_date
-            last_consultation = patient_data.get('last_consultation_date')
-            if last_consultation and last_consultation.strip():
-                try:
-                    datetime.strptime(last_consultation, '%Y-%m-%d')
-                except ValueError:
-                    logger.warning(f"Invalid date format for last_consultation_date: {last_consultation}")
-                    last_consultation = None
-            else:
-                last_consultation = None
+            # ✅ Hash password if provided (for local auth)
+            password_hash = None
+            if patient_data.get('password'):
+                password_hash = self.hash_password(patient_data['password'])
             
             query = """
             INSERT INTO patients (
-                patient_id, age_range, gender, smoking_status, 
-                has_hypertension, has_diabetes, has_asthma_history, 
-                previous_respiratory_infections, current_medications, allergies,
-                last_consultation_date, avatar
+                patient_id, email, username, full_name, password_hash, age_range, 
+                gender, smoking_status, has_hypertension, has_diabetes, 
+                has_asthma_history, previous_respiratory_infections, 
+                current_medications, allergies, avatar, auth_provider
             ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             """
             
             data_tuple = (
                 patient_data['patient_id'],
+                patient_data.get('email'),
+                patient_data.get('username'),
+                patient_data.get('full_name'),
+                password_hash,  # ✅ Use hashed password
                 patient_data.get('age_range'),
                 patient_data.get('gender'),
                 patient_data.get('smoking_status'),
@@ -282,19 +266,19 @@ class DatabaseManager:
                 patient_data.get('previous_respiratory_infections', 0),
                 patient_data.get('current_medications', ''),
                 patient_data.get('allergies', ''),
-                last_consultation,
-                patient_data.get('avatar', None)
+                patient_data.get('avatar', None),
+                patient_data.get('auth_provider', 'local')
             )
             
             cursor.execute(query, data_tuple)
             self.conn.commit()
             cursor.close()
             
-            logger.info(f"Successfully registered new patient: {patient_data['patient_id']} with avatar: {patient_data.get('avatar')}")
+            logger.info(f"Successfully registered new patient: {patient_data['username']}")
             return True
-            
+        
         except psycopg2.IntegrityError as e:
-            logger.warning(f"Registration failed: Patient ID {patient_data.get('patient_id', 'UNKNOWN')} already exists. Error: {e}")
+            logger.warning(f"Registration failed: Patient already exists. Error: {e}")
             self.conn.rollback()
             return False
         except Exception as e:
@@ -303,30 +287,21 @@ class DatabaseManager:
             return False
     
     def update_patient(self, patient_id: str, update_data: Dict[str, Any]) -> bool:
-        """
-        Updates an existing patient record in the database.
-        
-        Args:
-            patient_id: The patient's unique identifier
-            update_data: Dictionary containing fields to update
-            
-        Returns:
-            True if update is successful, False otherwise.
-        """
+        """Updates an existing patient record in the database"""
         try:
             if not self.conn:
                 self.connect()
             
             cursor = self.conn.cursor()
             
-            # Build dynamic UPDATE query based on provided fields
             set_clauses = []
             values = []
             
             allowed_fields = [
-                'age_range', 'gender', 'smoking_status', 'has_hypertension',
-                'has_diabetes', 'has_asthma_history', 'previous_respiratory_infections',
-                'current_medications', 'allergies', 'last_consultation_date', 'avatar'
+                'email', 'full_name', 'age_range', 'gender', 'smoking_status', 
+                'has_hypertension', 'has_diabetes', 'has_asthma_history', 
+                'previous_respiratory_infections', 'current_medications', 
+                'allergies', 'last_consultation_date', 'avatar'
             ]
             
             for field in allowed_fields:
@@ -334,14 +309,16 @@ class DatabaseManager:
                     set_clauses.append(f"{field} = %s")
                     values.append(update_data[field])
             
+            if 'password' in update_data and update_data['password']:
+                set_clauses.append("password_hash = %s")
+                values.append(self.hash_password(update_data['password']))
+            
             if not set_clauses:
                 logger.warning("No valid fields provided for update")
                 return False
             
-            # Always update the updated_at timestamp
             set_clauses.append("updated_at = %s")
             values.append(datetime.now())
-            
             values.append(patient_id)
             
             query = f"""
@@ -356,7 +333,7 @@ class DatabaseManager:
             cursor.close()
             
             if rows_affected > 0:
-                logger.info(f"Successfully updated patient: {patient_id} - Updated fields: {list(update_data.keys())}")
+                logger.info(f"Successfully updated patient: {patient_id}")
                 return True
             else:
                 logger.warning(f"No patient found with ID: {patient_id}")
@@ -372,12 +349,7 @@ class VectorDBManager:
     """Manages ChromaDB vector database for medical knowledge retrieval"""
     
     def __init__(self, persist_directory: str = "./vector_db/chroma_db"):
-        """
-        Initialize ChromaDB client with OpenAI embeddings
-        
-        Args:
-            persist_directory: Path to persist ChromaDB data
-        """
+        """Initialize ChromaDB client with OpenAI embeddings"""
         self.persist_directory = persist_directory
         self.collection_name = "medical_knowledge"
         
@@ -419,17 +391,7 @@ class VectorDBManager:
         query: Optional[str] = None,
         k: int = 5
     ) -> List[Dict[str, Any]]:
-        """
-        Retrieve relevant medical knowledge for a specific disease
-        
-        Args:
-            disease_name: Classified disease name (COPD, Pneumonia, etc.)
-            query: Optional additional context from user query
-            k: Number of documents to retrieve
-            
-        Returns:
-            List of relevant document chunks with metadata
-        """
+        """Retrieve relevant medical knowledge for a specific disease"""
         try:
             search_query = f"{disease_name}"
             if query:
@@ -464,17 +426,7 @@ class VectorDBManager:
         comorbidities: List[str],
         k: int = 3
     ) -> List[Dict[str, Any]]:
-        """
-        Retrieve context about disease interactions with comorbidities
-        
-        Args:
-            disease: Primary disease classification
-            comorbidities: List of patient comorbidities
-            k: Number of documents to retrieve per comorbidity
-            
-        Returns:
-            List of relevant documents about disease-comorbidity interactions
-        """
+        """Retrieve context about disease interactions with comorbidities"""
         try:
             results = []
             
@@ -501,15 +453,7 @@ class VectorDBManager:
             return []
     
     def get_retriever(self, search_kwargs: Optional[Dict] = None):
-        """
-        Get LangChain retriever for conversational chains
-        
-        Args:
-            search_kwargs: Optional search parameters (k, filter, etc.)
-            
-        Returns:
-            LangChain retriever object
-        """
+        """Get LangChain retriever for conversational chains"""
         if search_kwargs is None:
             search_kwargs = {"k": 5}
         
@@ -517,9 +461,7 @@ class VectorDBManager:
 
 
 class DataRetrievalAgent:
-    """
-    Unified agent that coordinates patient DB and vector DB retrieval
-    """
+    """Unified agent that coordinates patient DB and vector DB retrieval"""
     
     def __init__(self):
         """Initialize both database managers"""
@@ -534,18 +476,7 @@ class DataRetrievalAgent:
         user_query: Optional[str] = None,
         audio_result: Optional[Dict] = None
     ) -> Dict[str, Any]:
-        """
-        Retrieve comprehensive context for LLM agent
-        
-        Args:
-            patient_id: Patient identifier
-            disease_classification: Disease from audio analysis
-            user_query: User's question
-            audio_result: Full audio analysis output
-            
-        Returns:
-            Complete context dictionary for LLM
-        """
+        """Retrieve comprehensive context for LLM agent"""
         try:
             patient_data = self.db_manager.get_patient_data(patient_id)
             patient_history = self.db_manager.get_patient_history(patient_id, limit=3)

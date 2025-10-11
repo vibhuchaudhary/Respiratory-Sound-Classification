@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import '../css/HealthProfile.css';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+
 const HealthProfile = ({ user }) => {
     const [healthData, setHealthData] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
 
     useEffect(() => {
-        if (user && user.username) {
+        if (user && user.patient_id) {
             const fetchHealthData = async () => {
                 try {
-                    const response = await fetch(`http://localhost:8000/api/patient/${user.username}`);
+                    const response = await fetch(`${API_BASE_URL}/api/patient/${user.patient_id}`);
                     
                     if (!response.ok) {
                         if (response.status === 404) {
@@ -75,7 +77,7 @@ const HealthProfile = ({ user }) => {
     return (
         <div className="profile-page-container">
             <div className="profile-header">
-                <h1> <span> 🩺 </span> Health Profile</h1>
+                <h1><span>🩺</span> Health Profile</h1>
                 <p className="patient-id">Patient ID: {healthData.patient_id}</p>
             </div>
 
@@ -84,6 +86,18 @@ const HealthProfile = ({ user }) => {
                 <div className="profile-card">
                     <h3>📋 Basic Information</h3>
                     <div className="info-grid">
+                        <div className="info-item">
+                            <span className="info-label">Full Name:</span>
+                            <span className="info-value">{healthData.full_name || 'Not specified'}</span>
+                        </div>
+                        <div className="info-item">
+                            <span className="info-label">Email:</span>
+                            <span className="info-value">{healthData.email || 'Not specified'}</span>
+                        </div>
+                        <div className="info-item">
+                            <span className="info-label">Username:</span>
+                            <span className="info-value">@{healthData.username || 'Not specified'}</span>
+                        </div>
                         <div className="info-item">
                             <span className="info-label">Age Range:</span>
                             <span className="info-value">{healthData.age_range || 'Not specified'}</span>
@@ -96,6 +110,13 @@ const HealthProfile = ({ user }) => {
                             <span className="info-label">Smoking Status:</span>
                             <span className="info-value">{healthData.smoking_status || 'Not specified'}</span>
                         </div>
+                    </div>
+                </div>
+
+                {/* Medical History Card */}
+                <div className="profile-card">
+                    <h3>📊 Medical History</h3>
+                    <div className="info-grid">
                         <div className="info-item">
                             <span className="info-label">Previous Respiratory Infections:</span>
                             <span className="info-value">
@@ -104,6 +125,14 @@ const HealthProfile = ({ user }) => {
                                     : 'Not specified'}
                             </span>
                         </div>
+                        {healthData.last_consultation_date && (
+                            <div className="info-item">
+                                <span className="info-label">Last Consultation:</span>
+                                <span className="info-value">
+                                    {new Date(healthData.last_consultation_date).toLocaleDateString()}
+                                </span>
+                            </div>
+                        )}
                     </div>
                 </div>
 

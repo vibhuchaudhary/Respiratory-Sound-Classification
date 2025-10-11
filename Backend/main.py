@@ -1,13 +1,13 @@
 """
 main.py - FastAPI Backend for A.I.R.A. (AI Respiratory Assistant)
-Connects Audio Classifier, LLM Agent, and Database for frontend integration
+Updated with email, username, password authentication and Google OAuth
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
-from fastapi import FastAPI, File, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from fastapi.security import OAuth2PasswordBearer
+from pydantic import BaseModel, Field, EmailStr
 from fastapi.staticfiles import StaticFiles
 from typing import Optional, Dict, Any, List
 import os
@@ -16,10 +16,7 @@ from datetime import datetime, timedelta
 import uuid
 import shutil
 from contextlib import asynccontextmanager
-from jose import jwt
-from contextlib import asynccontextmanager
-
-from jose import jwt
+from jose import jwt, JWTError
 
 from llm_agent import LungScopeChatbot
 from database import DataRetrievalAgent
@@ -29,9 +26,11 @@ import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # ---------------- JWT CONFIG ---------------- #
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "A_876xKZVK2gnBtTkOGeeiOjwH83DZSGTQ6thZ15yxs")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 
 def create_access_token(data: dict):
     """Create JWT access token"""
@@ -40,6 +39,14 @@ def create_access_token(data: dict):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+def verify_token(token: str):
+    """Verify JWT token"""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        return None
 
 # ---------------- LOGGING ---------------- #
 os.makedirs("logs", exist_ok=True)
@@ -65,18 +72,16 @@ async def lifespan(app: FastAPI):
 
     logger.info("🚀 A.I.R.A Backend starting up...")
     os.makedirs("uploads/audio", exist_ok=True)
+    os.makedirs("uploads/avatars", exist_ok=True)
     os.makedirs("models", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
     logger.info("✓ Directories created")
 
-
     try:
-        chatbot = LungScopeChatbot(model_name="gpt-4")  # Temperature is set inside __init__
+        chatbot = LungScopeChatbot(model_name="gpt-4")
         logger.info("✓ LLM Chatbot initialized")
     except Exception as e:
         logger.error(f"✗ Failed to initialize chatbot: {e}")
-        chatbot = None
-
         chatbot = None
 
     try:
@@ -97,16 +102,7 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("🧹 A.I.R.A Backend shutting down...")
-    audio_classifier = None
-
-    yield
-
-    logger.info("🧹 A.I.R.A AI Backend shutting down...")
     if chatbot:
-        try:
-            chatbot.cleanup()
-        except:
-            pass
         try:
             chatbot.cleanup()
         except:
@@ -118,26 +114,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="A.I.R.A API",
     description="AI Healthcare Assistant for Respiratory Analysis and Smart Diagnostics",
-    version="1.0.2",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    lifespan=lifespan
-)
-
-# ---------------- MIDDLEWARE ---------------- #
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ---------------- FASTAPI APP ---------------- #
-app = FastAPI(
-    title="A.I.R.A API",
-    description="AI Healthcare Assistant for Respiratory Analysis and Smart Diagnostics",
-    version="1.0.2",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan
@@ -153,22 +130,30 @@ app.add_middleware(
 )
 
 # ---------------- PYDANTIC MODELS ---------------- #
-class PatientCreate(BaseModel):
-    patient_id: str
-    age_range: str
-    gender: str
-    smoking_status: str
-    has_hypertension: bool
-    has_diabetes: bool
-    has_asthma_history: bool
-    previous_respiratory_infections: int
-    current_medications: str
-    allergies: str
-    last_consultation_date: Optional[str] = None
-    avatar: Optional[str] = None
+class UserRegister(BaseModel):
+    email: EmailStr
+    username: str
+    full_name: str
+    password: str
+    age_range: Optional[str] = None
+    gender: Optional[str] = None
+    smoking_status: Optional[str] = None
+    has_hypertension: Optional[bool] = False
+    has_diabetes: Optional[bool] = False
+    has_asthma_history: Optional[bool] = False
+    previous_respiratory_infections: Optional[int] = 0
+    current_medications: Optional[str] = ""
+    allergies: Optional[str] = ""
 
 class UserLogin(BaseModel):
-    username: str
+    username_or_email: str
+    password: str
+
+class GoogleAuthData(BaseModel):
+    email: EmailStr
+    name: str
+    picture: str
+    google_id: str
 
 class Token(BaseModel):
     access_token: str
@@ -201,6 +186,9 @@ class AudioAnalysisResponse(BaseModel):
 
 class PatientDataResponse(BaseModel):
     patient_id: str
+    email: str
+    username: str
+    full_name: str
     age_range: Optional[str]
     gender: Optional[str]
     smoking_status: Optional[str]
@@ -215,13 +203,14 @@ async def root():
     """Root endpoint"""
     return {
         "message": "A.I.R.A API",
-        "version": "1.0.1",
+        "version": "2.0.0",
         "status": "operational",
         "endpoints": {
             "docs": "/docs",
             "health": "/health",
             "register": "/register",
             "login": "/login",
+            "google_login": "/google-login",
             "chat": "/api/chat",
             "audio_analysis": "/api/analyze-audio",
             "full_analysis": "/api/full-analysis",
@@ -247,20 +236,25 @@ async def health_check():
 # ---------------- AUTHENTICATION ---------------- #
 @app.post("/register", tags=["Authentication"])
 async def register_patient(
-    patient_id: str = Form(...),
-    age_range: str = Form(...),
-    gender: str = Form(...),
-    smoking_status: str = Form(...),
+    email: str = Form(...),
+    username: str = Form(...),
+    full_name: str = Form(...),
+    password: str = Form(...),
+    age_range: str = Form(None),
+    gender: str = Form(None),
+    smoking_status: str = Form(None),
     has_hypertension: bool = Form(False),
     has_diabetes: bool = Form(False),
     has_asthma_history: bool = Form(False),
     previous_respiratory_infections: int = Form(0),
     current_medications: str = Form(""),
     allergies: str = Form(""),
-    last_consultation_date: Optional[str] = Form(None),
     avatar: UploadFile = File(None)
 ):
-    """Register a new patient with optional avatar upload"""
+    """Register a new patient with email, username, and password"""
+    
+    # Generate unique patient ID
+    patient_id = f"PT_{uuid.uuid4().hex[:12].upper()}"
     
     avatar_path = None
     if avatar:
@@ -276,7 +270,7 @@ async def register_patient(
         
         # Save avatar
         os.makedirs("uploads/avatars", exist_ok=True)
-        avatar_filename = f"{patient_id}_{uuid.uuid4()}{file_ext}"
+        avatar_filename = f"{username}_{uuid.uuid4()}{file_ext}"
         avatar_path = os.path.join("uploads/avatars", avatar_filename)
         
         with open(avatar_path, "wb") as buffer:
@@ -286,6 +280,10 @@ async def register_patient(
     
     db_data = {
         'patient_id': patient_id,
+        'email': email.lower(),
+        'username': username,
+        'full_name': full_name,
+        'password': password,
         'age_range': age_range,
         'gender': gender,
         'smoking_status': smoking_status,
@@ -295,8 +293,8 @@ async def register_patient(
         'previous_respiratory_infections': previous_respiratory_infections,
         'current_medications': current_medications,
         'allergies': allergies,
-        'last_consultation_date': last_consultation_date,
-        'avatar': avatar_path
+        'avatar': avatar_path,
+        'auth_provider': 'local'
     }
     
     agent = DataRetrievalAgent()
@@ -307,14 +305,16 @@ async def register_patient(
                 os.remove(avatar_path.lstrip('/'))
             raise HTTPException(
                 status_code=409,
-                detail="Patient with this ID already exists. Please choose a different ID."
+                detail="Username or email already exists. Please choose different credentials."
             )
         
-        logger.info(f"New patient registered: {patient_id}")
+        logger.info(f"New patient registered: {username}")
         return JSONResponse(
             content={
-                "message": "Patient registered successfully! You can now login with your Patient ID.",
+                "message": "Registration successful! You can now login.",
                 "patient_id": patient_id,
+                "username": username,
+                "email": email,
                 "avatar": avatar_path
             },
             status_code=201
@@ -332,38 +332,60 @@ async def register_patient(
     finally:
         agent.cleanup()
 
-# ---------------- AUTHENTICATION ---------------- #
 @app.post("/login", response_model=Token, tags=["Authentication"])
-async def login_for_access_token(form_data: UserLogin):
-    """Login with just username/patient_id (no password required)"""
+async def login_for_access_token(
+    username_or_email: str = Form(...),
+    password: str = Form(...)
+):
+    """Login with username/email and password"""
     agent = DataRetrievalAgent()
     try:
-        user = agent.db_manager.get_patient_for_auth(form_data.username)
+        # Get user from database
+        user = agent.db_manager.get_patient_for_auth(username_or_email.lower())
+        
         if not user:
             raise HTTPException(
                 status_code=401,
-                detail="Patient ID not found. Please check your ID or register."
+                detail="Invalid credentials. Please check your username/email and password."
             )
         
-        patient_profile = agent.db_manager.get_patient_data(form_data.username)
+        # Check if this is a Google OAuth account
+        if user.get('auth_provider') == 'google':
+            raise HTTPException(
+                status_code=401,
+                detail="This account uses Google Sign-In. Please use 'Sign in with Google'."
+            )
+        
+        # Verify password
+        if not agent.db_manager.verify_password(password, user['password_hash']):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid credentials. Please check your username/email and password."
+            )
+        
+        # Get full patient profile
+        patient_profile = agent.db_manager.get_patient_data(user['patient_id'])
         if not patient_profile:
             raise HTTPException(
                 status_code=500,
                 detail="Failed to load patient profile."
             )
         
+        # Create access token
         access_token = create_access_token(data={"sub": user["patient_id"]})
         
         avatar_url = patient_profile.get("avatar") or "https://via.placeholder.com/150/4A90E2/FFFFFF?text=Patient"
         
-        logger.info(f"Patient logged in: {form_data.username}")
+        logger.info(f"Patient logged in: {user['username']}")
         
         return Token(
             access_token=access_token,
             token_type="bearer",
             user_info={
-                "username": patient_profile.get("patient_id"),
-                "name": f"Patient {patient_profile.get('patient_id')[:8]}...",
+                "patient_id": patient_profile.get("patient_id"),
+                "username": patient_profile.get("username"),
+                "name": patient_profile.get("full_name"),
+                "email": patient_profile.get("email"),
                 "avatar": avatar_url,
                 "age_range": patient_profile.get("age_range"),
                 "gender": patient_profile.get("gender")
@@ -376,6 +398,78 @@ async def login_for_access_token(form_data: UserLogin):
         raise HTTPException(
             status_code=500,
             detail=f"Login failed: {str(e)}"
+        )
+    finally:
+        agent.cleanup()
+
+@app.post("/google-login", response_model=Token, tags=["Authentication"])
+async def google_login(google_data: GoogleAuthData):
+    """Login or register with Google OAuth"""
+    agent = DataRetrievalAgent()
+    try:
+        # Check if user already exists
+        user = agent.db_manager.get_patient_for_auth(google_data.email.lower())
+        
+        if user:
+            # Existing user - login
+            patient_profile = agent.db_manager.get_patient_data(user['patient_id'])
+        else:
+            # New user - register
+            patient_id = f"PT_{uuid.uuid4().hex[:12].upper()}"
+            username = google_data.email.split('@')[0]
+            
+            # Check if username exists, make it unique if needed
+            counter = 1
+            original_username = username
+            while agent.db_manager.get_patient_for_auth(username):
+                username = f"{original_username}{counter}"
+                counter += 1
+            
+            db_data = {
+                'patient_id': patient_id,
+                'email': google_data.email.lower(),
+                'username': username,
+                'full_name': google_data.name,
+                'password': None,  # No password for Google auth
+                'avatar': google_data.picture,
+                'auth_provider': 'google'
+            }
+            
+            success = agent.db_manager.create_patient(db_data)
+            if not success:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to create account with Google"
+                )
+            
+            patient_profile = agent.db_manager.get_patient_data(patient_id)
+            logger.info(f"New Google user registered: {google_data.email}")
+        
+        # Create access token
+        access_token = create_access_token(data={"sub": patient_profile["patient_id"]})
+        
+        logger.info(f"Google login successful: {google_data.email}")
+        
+        return Token(
+            access_token=access_token,
+            token_type="bearer",
+            user_info={
+                "patient_id": patient_profile.get("patient_id"),
+                "username": patient_profile.get("username"),
+                "name": patient_profile.get("full_name"),
+                "email": patient_profile.get("email"),
+                "avatar": patient_profile.get("avatar") or google_data.picture,
+                "age_range": patient_profile.get("age_range"),
+                "gender": patient_profile.get("gender")
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Google login error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Google login failed: {str(e)}"
         )
     finally:
         agent.cleanup()
@@ -459,6 +553,12 @@ async def analyze_respiratory_audio(
     except Exception as e:
         logger.error(f"Error in audio analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except:
+                pass
 
 # ---------------- COMBINED WORKFLOW ---------------- #
 @app.post("/api/full-analysis", tags=["Complete Analysis"])
@@ -473,8 +573,6 @@ async def complete_respiratory_analysis(
     2. Retrieve patient medical history
     3. Get medical knowledge from vector DB
     4. Generate personalized AI response
-    
-    This is the main endpoint for frontend integration
     """
     file_path = None
     try:
@@ -483,23 +581,19 @@ async def complete_respiratory_analysis(
         
         logger.info(f"Full analysis request from patient: {patient_id[:8]}***")
         
-        # Validate audio format
         if not file.filename.endswith(('.wav', '.mp3', '.flac')):
             raise HTTPException(status_code=400, detail="Invalid audio format. Supported: .wav, .mp3, .flac")
         
-        # Save uploaded audio file
         file_id = str(uuid.uuid4())
         file_path = os.path.join("uploads/audio", f"{file_id}_{file.filename}")
         
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
-        # Step 1: Classify audio
         logger.info("Classifying audio...")
         audio_result = audio_classifier.predict(file_path)
         logger.info(f"Audio classified as: {audio_result['disease']} (confidence: {audio_result['confidence']:.2f})")
         
-        # Step 2: Generate AI response with audio context
         logger.info("Generating AI response with RAG pipeline...")
         chat_response = chatbot.query(
             user_query=query,
@@ -508,7 +602,6 @@ async def complete_respiratory_analysis(
         )
         logger.info("Chat response generated successfully")
         
-        # Step 3: Return combined results
         return {
             "audio_analysis": {
                 "disease": audio_result["disease"],
@@ -516,7 +609,7 @@ async def complete_respiratory_analysis(
                 "severity": audio_result.get("severity", "N/A"),
                 "probabilities": audio_result.get("probabilities", {})
             },
-            "ai_response": chat_response,  # FIXED: was "classification_result" and undefined "result"
+            "ai_response": chat_response,
             "timestamp": datetime.now().isoformat()
         }
         
@@ -563,12 +656,16 @@ async def get_patient_data(patient_id: str):
         
         return PatientDataResponse(
             patient_id=patient_data['patient_id'],
+            email=patient_data.get('email'),
+            username=patient_data.get('username'),
+            full_name=patient_data.get('full_name'),
             age_range=patient_data.get('age_range'),
             gender=patient_data.get('gender'),
             smoking_status=patient_data.get('smoking_status'),
             comorbidities=comorbidities,
             current_medications=patient_data.get('current_medications'),
-            allergies=patient_data.get('allergies')
+            allergies=patient_data.get('allergies'),
+            avatar=patient_data.get('avatar')
         )
     except HTTPException:
         raise
@@ -627,6 +724,9 @@ async def get_model_info():
 @app.put("/api/patient/{username}/update", tags=["Patient Data"])
 async def update_patient_profile(
     username: str,
+    email: Optional[str] = Form(None),
+    full_name: Optional[str] = Form(None),
+    password: Optional[str] = Form(None),
     age_range: Optional[str] = Form(None),
     gender: Optional[str] = Form(None),
     smoking_status: Optional[str] = Form(None),
@@ -639,21 +739,27 @@ async def update_patient_profile(
     last_consultation_date: Optional[str] = Form(None),
     avatar: Optional[UploadFile] = File(None)
 ):
-    """Update patient profile information including avatar"""
+    """Update patient profile information including avatar and password"""
     agent = DataRetrievalAgent()
     try:
-        patient = agent.db_manager.get_patient_data(username)
-        if not patient:
+        # Find patient by username
+        user = agent.db_manager.get_patient_for_auth(username)
+        if not user:
             raise HTTPException(status_code=404, detail="Patient not found")
+        
+        patient_id = user['patient_id']
+        patient = agent.db_manager.get_patient_data(patient_id)
+        
         update_data = {}
         
         form_data = {
-            "age_range": age_range, "gender": gender, "smoking_status": smoking_status,
+            "email": email, "full_name": full_name, "age_range": age_range, 
+            "gender": gender, "smoking_status": smoking_status,
             "has_hypertension": has_hypertension, "has_diabetes": has_diabetes,
             "has_asthma_history": has_asthma_history, 
             "previous_respiratory_infections": previous_respiratory_infections,
             "current_medications": current_medications, "allergies": allergies,
-            "last_consultation_date": last_consultation_date
+            "last_consultation_date": last_consultation_date, "password": password
         }
 
         for key, value in form_data.items():
@@ -690,7 +796,7 @@ async def update_patient_profile(
         if not update_data:
              return JSONResponse(content={"message": "No fields to update"}, status_code=200)
 
-        success = agent.db_manager.update_patient(username, update_data)
+        success = agent.db_manager.update_patient(patient_id, update_data)
         if not success:
             raise HTTPException(status_code=500, detail="Failed to update patient profile")
 
@@ -708,7 +814,6 @@ async def update_patient_profile(
         agent.cleanup()
 
 # ---------------- STATIC FILES ---------------- #
-os.makedirs("uploads/avatars", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # ---------------- ERROR HANDLERS ---------------- #
@@ -729,7 +834,6 @@ if __name__ == "__main__":
     
     logger.info("Starting A.I.R.A Backend Server...")
     logger.info("API Documentation available at: http://localhost:8000/docs")
-    
     
     uvicorn.run(
         "main:app",
